@@ -51,7 +51,7 @@ void handleUsername(AsyncWebServerRequest *request) {
         // 9a. อัพเดทสถานะบนหน้าจอ
         currentUsername = receivedUsername;
         alertText = "Identity Created Successfully";
-        authenStatus = "X"; 
+        authenStatus = "✓"; 
         updateDisplay(); 
         
         request->send(200, "text/plain", "Username received.");
