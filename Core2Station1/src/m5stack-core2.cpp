@@ -4,28 +4,30 @@
 #include <ESPAsyncWebServer.h>
 #include <qrcode.h>
 #include <HTTPClient.h>
-#include <DNSServer.h> // Library สำหรับทำ Captive Portal
+#include <DNSServer.h>
 
-// --- CENTRALIZED CONFIGURATION ---
-// IMPORTANT: ถ้า StickC ได้รับ IP Address อื่นที่ไม่ใช่ 192.168.4.2 
-// ให้เปลี่ยนค่า STICKC_IP เป็น IP Address จริงที่ StickC ได้รับ
+// --- CONFIGURATION ---
 const char *SSID = "Web3Showcase_AP";
 const char *PASSWORD = "12345678";
-const char* STICKC_IP = "192.168.4.2"; 
+const char* STICKC_IP = "192.168.4.20"; 
 const int STICKC_PORT = 88;
 
-IPAddress localIP(192, 168, 4, 1); // AP IP Address (Core2)
+IPAddress localIP(192, 168, 4, 1);
 IPAddress gateway(192, 168, 4, 1);
 IPAddress subnet(255, 255, 255, 0);
 
-AsyncWebServer server(80);
-String capturedUsername = ""; 
+// สร้างตัวแปร String สำหรับ URL ของ IP เพื่อใช้ในโค้ดใหม่
+String localIPURL = "http://192.168.4.1";
 
+AsyncWebServer server(80);
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
-// --- HTML for Captive Portal ---
-const char* CAPTIVE_HTML = R"raw(
+String penningUsername = "";
+bool hasNewUserName = false;
+
+// --- HTML (เปลี่ยนชื่อตัวแปรเป็น index_html ตามโค้ดใหม่) ---
+const char* index_html = R"raw(
 <!DOCTYPE html>
 <html>
 <head>
@@ -51,12 +53,12 @@ const char* CAPTIVE_HTML = R"raw(
 
 // --- CORE FUNCTIONS ---
 
-// Core2 ส่งข้อมูล Username ที่ได้รับมาไปยัง StickC-Plus2 ผ่าน Fixed IP
 void sendUsernameToStickC(String username) {
     HTTPClient http;
     String url = "http://" + String(STICKC_IP) + ":" + String(STICKC_PORT) + "/set_username"; 
 
     http.begin(url);
+    http.setConnectTimeout(2000); // Timeout 2 วินาที กันค้าง
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
     String postData = "username=" + username;
 
@@ -64,14 +66,13 @@ void sendUsernameToStickC(String username) {
 
     M5.Lcd.setCursor(5, 100);
     if (httpResponseCode > 0) {
-        M5.Lcd.printf("Sent to StickC (Code: %d)", httpResponseCode);
+        M5.Lcd.printf("Sent to StickC (Code: %d) ", httpResponseCode);
     } else {
         M5.Lcd.printf("StickC Request Failed (Error: %s)", http.errorToString(httpResponseCode).c_str());
     }
     http.end();
 }
 
-// 2. แสดง QR code สำหรับการเชื่อมต่อ Wi-Fi
 void displayQRCode(const char* data) {
     M5.Lcd.fillScreen(BLACK);
     M5.Lcd.setTextDatum(top_center);
@@ -91,81 +92,108 @@ void displayQRCode(const char* data) {
     M5.Lcd.print("2. Enter Username in Browser");
 }
 
-void setup() {
-    auto cfg = M5.config();
-    M5.begin(cfg);
-    M5.Lcd.setRotation(1); 
+// --- SETUP SERVER FUNCTION (รวมโค้ดใหม่ที่นี่) ---
+void setUpWebserver() {
+    // 1. Required Handlers (Windows 11 & PAD Fixes)
+    server.on("/connecttest.txt", [](AsyncWebServerRequest *request) { request->redirect("http://logout.net"); }); 
+    server.on("/wpad.dat", [](AsyncWebServerRequest *request) { request->send(404); }); 
 
-    // Core2 สร้าง WiFi Access Point (SoftAP mode)
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(localIP, gateway, subnet);
-    WiFi.softAP(SSID, PASSWORD);
-    
-    // แสดง IP และ MAC Address ของ Core2
-    M5.Lcd.printf("AP IP: %s\n", WiFi.softAPIP().toString().c_str());
-    M5.Lcd.printf("AP MAC: %s\n", WiFi.softAPmacAddress().c_str());
-
-    // 2. สร้าง QR Code Data
-    String qrData = "WIFI:S:" + String(SSID) + ";T:WPA;P:" + String(PASSWORD) + ";;";
-    displayQRCode(qrData.c_str());
-
-    // 3. ตั้งค่า DNS Server สำหรับ Captive Portal (ดักจับทุก request และส่งไปที่ localIP)
-    dnsServer.start(DNS_PORT, "*", localIP);
-
-    // --- WEB SERVER HANDLERS ---
-    
-    // Redirect Handlers (บังคับให้ Pop-up ขึ้นบน iOS/Android)
-    server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request) {
-        // iOS/Android ใช้หน้านี้: Redirect ไปหน้าหลัก
-        request->redirect("http://" + WiFi.softAPIP().toString() + "/");
+    // 2. Android Specific (แก้ตรงนี้: ส่งหน้าเว็บ index_html สวนกลับไปเลย ไม่ต้อง redirect)
+    // Android รุ่นใหม่
+    server.on("/generate_204", [](AsyncWebServerRequest *request) { 
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", index_html);
+        response->addHeader("Cache-Control", "public,max-age=31536000");
+        request->send(response);
     });
-    
-    // Redirect Handlers (สำหรับ Windows)
-    server.on("/fwlink", HTTP_GET, [](AsyncWebServerRequest *request) {
-        // Windows ใช้หน้านี้: Redirect ไปหน้าหลัก
-        request->redirect("http://" + WiFi.softAPIP().toString() + "/");
-    });
-    
-    // A. Handle Root Path
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(200, "text/html", CAPTIVE_HTML); 
+    // Android รุ่นเก่า
+    server.on("/gen_204", [](AsyncWebServerRequest *request) { 
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", index_html);
+        response->addHeader("Cache-Control", "public,max-age=31536000");
+        request->send(response);
     });
 
-    // B. Handle Submission
+    // 3. Background responses (Microsoft, Apple, Firefox) - พวกนี้ Redirect เหมือนเดิมดีแล้ว
+    server.on("/redirect", [](AsyncWebServerRequest *request) { request->redirect(localIPURL); });          // Microsoft
+    server.on("/hotspot-detect.html", [](AsyncWebServerRequest *request) { request->redirect(localIPURL); }); // Apple
+    server.on("/canonical.html", [](AsyncWebServerRequest *request) { request->redirect(localIPURL); });    // Firefox
+    server.on("/success.txt", [](AsyncWebServerRequest *request) { request->send(200); });                  // Firefox
+    server.on("/ncsi.txt", [](AsyncWebServerRequest *request) { request->redirect(localIPURL); });          // Windows
+
+    // 4. Favicon 
+    server.on("/favicon.ico", [](AsyncWebServerRequest *request) { request->send(404); });
+
+    // 5. Serve Basic HTML Page (Root)
+    server.on("/", HTTP_ANY, [](AsyncWebServerRequest *request) {
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", index_html);
+        response->addHeader("Cache-Control", "public,max-age=31536000");
+        request->send(response);
+        Serial.println("Served Basic HTML Page");
+    });
+
+    // 6. Handle Form Submission
     server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request){
         if (request->hasParam("username", true)) {
             String username = request->getParam("username", true)->value();
-
+            penningUsername = username;
+            hasNewUserName = true;
             M5.Lcd.fillScreen(BLACK);
             M5.Lcd.setTextDatum(top_left);
             M5.Lcd.setFont(&fonts::Font2);
-            M5.Lcd.printf("Username Received: %s", username.c_str());
-            
-            request->send(200, "text/plain", "Username '" + username + "' submitted successfully. Please wait for StickC update.");
-            
-            // ส่งข้อมูล Username ไปให้ StickC
-            sendUsernameToStickC(username);
-            
+            M5.Lcd.printf("Username: %s", username.c_str());
+            request->send(200, "text/plain", "Success! Check the StickC.");
         } else {
             request->send(400, "text/plain", "Missing Username");
         }
     });
 
-    // ดักจับทุก Request ที่หาไม่เจอ (onNotFound) แล้ว Redirect ไปหน้าหลัก (/)
+    // 7. Catch All (onNotFound) - ส่งหน้าเว็บสวนไปเลยเช่นกัน
     server.onNotFound([](AsyncWebServerRequest *request) {
-        if (request->method() == HTTP_GET) {
-            request->redirect("http://" + WiFi.softAPIP().toString() + "/");
-        } else {
-            request->send(404, "text/plain", "Not found");
-        }
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", index_html);
+        request->send(response); // ไม่ Redirect แล้ว ส่งหน้าเว็บใส่เลย
+        Serial.print("Caught: ");
+        Serial.println(request->url());
     });
 
     server.begin();
     M5.Lcd.println("\nHTTP Server Started.");
 }
 
+void setup() {
+    auto cfg = M5.config();
+    M5.begin(cfg);
+    M5.Lcd.setRotation(1); 
+    Serial.begin(115200); // เริ่มต้น Serial เพื่อดู Debug จากโค้ดใหม่
+
+    // WiFi Setup
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(localIP, gateway, subnet);
+    WiFi.softAP(SSID, PASSWORD);
+    
+    // Display Info
+    M5.Lcd.printf("AP IP: %s\n", WiFi.softAPIP().toString().c_str());
+    M5.Lcd.printf("AP MAC: %s\n", WiFi.softAPmacAddress().c_str());
+
+    // QR Code
+    String qrData = "WIFI:S:" + String(SSID) + ";T:WPA;P:" + String(PASSWORD) + ";;";
+    displayQRCode(qrData.c_str());
+
+    // DNS Server
+    dnsServer.start(DNS_PORT, "*", localIP);
+
+    // เริ่มต้น Webserver ด้วยฟังก์ชันใหม่
+    setUpWebserver();
+}
+
 void loop() {
-    // ต้องประมวลผล DNS ตลอดเวลาเพื่อให้ Captive Portal ทำงาน
     dnsServer.processNextRequest();
+
+    if(hasNewUserName){
+        sendUsernameToStickC(penningUsername);
+        hasNewUserName = false;
+        // หลังจากส่งเสร็จ อาจจะให้กลับมาหน้า QR Code หรือหน้า Info ก็ได้
+        delay(2000);
+        String qrData = "WIFI:S:" + String(SSID) + ";T:WPA;P:" + String(PASSWORD) + ";;";
+        displayQRCode(qrData.c_str());
+    }
     M5.update();
 }
