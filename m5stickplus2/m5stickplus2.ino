@@ -2,61 +2,121 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <esp_gap_ble_api.h> // เพิ่ม Library นี้สำหรับเปลี่ยนชื่อแบบ Fast Mode
 
-// --- CENTRALIZED CONFIGURATION ---
+// --- CONFIGURATION ---
 const char *SSID_AP = "Web3Showcase_AP";
 const char *PASSWORD_AP = "12345678";
-const int LOCAL_PORT = 88; // Port ที่ StickC รอรับ Request
-const IPAddress local_IP(192,168,4,2);
-const IPAddress gateway(192,168,4,1);
-const IPAddress subnet(255,255,255,0);
+const int LOCAL_PORT = 88; 
 
+// --- FIX IP SETTINGS ---
+IPAddress localIP(192, 168, 4, 20);   // ใช้ IP .20 (ถูกต้องแล้ว)
+IPAddress gateway(192, 168, 4, 1);   
+IPAddress subnet(255, 255, 255, 0); 
+
+// --- GLOBALS ---
 AsyncWebServer stickCServer(LOCAL_PORT);
 String currentUsername = "Not Registered";
 String authenStatus = "X";
 int ccoin = 0;
 String alertText = "Waiting for Identity...";
-
-// --- UI DATA ---
-// ตัวแปรสำหรับเก็บ MAC Address ของตัวเอง (ใช้ในการอ้างอิงสำหรับ Atom Matrix ใน Station 2)
 String myMacAddress = "";
 
-// --- CORE FUNCTIONS ---
+BLEServer *pServer = NULL;
+BLEAdvertising *pAdvertising = NULL;
 
-// 9a. แสดงข้อมูล Username และสถานะของผู้เข้าร่วมผ่านทางหน้าจอ
-void updateDisplay() {
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setTextDatum(top_left);
-    M5.Lcd.setFont(&fonts::Font2);
+// Flag ฝากงานให้ Loop ทำ
+bool shouldRestartBLE = false;
+String newBLEName = "";
+
+// --- FUNCTIONS ---
+
+// 1. ฟังก์ชันเปลี่ยนชื่อ BLE (ฉบับแก้ไข: ไม่ต้องปิดระบบ Matrix เห็นไวมาก)
+void startBLE(String name) {
+    // กรณีเพิ่งเริ่มครั้งแรก (Start)
+    if (pAdvertising == NULL) {
+        BLEDevice::init(name.c_str()); 
+        pServer = BLEDevice::createServer();
+        pAdvertising = BLEDevice::getAdvertising();
+        pAdvertising->setScanResponse(true);
+        pAdvertising->setMinPreferred(0x06);  
+        pAdvertising->setMinPreferred(0x12);
+    } else {
+        // กรณีเปลี่ยนชื่อ: แค่หยุดประกาศชั่วคราว (Stop)
+        pAdvertising->stop();
+    }
+
+    // --- ส่วนสำคัญ: เปลี่ยนชื่อระดับ Hardware โดยไม่ต้อง deinit ---
+    esp_ble_gap_set_device_name(name.c_str());
+    // -------------------------------------------------------
+
+    // จัดกระเป๋าใบที่ 1 (Main): ใส่ UUID 1234
+    BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
+    oAdvertisementData.setFlags(0x06);
+    oAdvertisementData.setCompleteServices(BLEUUID("1234")); 
+    pAdvertising->setAdvertisementData(oAdvertisementData);
+
+    // จัดกระเป๋าใบที่ 2 (Response): ใส่ชื่อใหม่
+    BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+    oScanResponseData.setName(name.c_str()); 
+    pAdvertising->setScanResponseData(oScanResponseData);
+
+    // เริ่มประกาศอีกครั้ง (Start)
+    pAdvertising->start();
     
-    M5.Lcd.setCursor(5, 5);
-    M5.Lcd.print("MAC: "); M5.Lcd.println(myMacAddress); // แสดง MAC Address เพื่อระบุตัวตน
-    M5.Lcd.setCursor(5, 25);
-    M5.Lcd.printf("Username: %s\n", currentUsername.c_str());
-    M5.Lcd.printf("Authen Status: %s\n", authenStatus.c_str());
-    M5.Lcd.printf("CCoin: %d\n", ccoin);
-    
-    M5.Lcd.setCursor(5, 85);
-    M5.Lcd.printf("ALERT: \n%s", alertText.c_str());
+    Serial.printf("[BLE] Name Updated to: %s (UUID: 1234)\n", name.c_str());
 }
 
-// Handler สำหรับรับ Username จาก Core2 (/set_username)
-void handleUsername(AsyncWebServerRequest *request) {
-    if (request->hasParam("username", true)) {
-        String receivedUsername = request->getParam("username", true)->value();
+// 2. ฟังก์ชันอัปเดตหน้าจอ
+void updateDisplay() {
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setTextDatum(top_left);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(WHITE);
+    
+    M5.Display.setCursor(5, 5);
+    M5.Display.printf("IP: %s\n", WiFi.localIP().toString().c_str()); 
+    M5.Display.setCursor(5, 25);
+    M5.Display.printf("User: %s\n", currentUsername.c_str());
+    M5.Display.printf("Status: %s\n", authenStatus.c_str());
+    M5.Display.printf("CCoin: %d\n", ccoin);
+    
+    if (authenStatus == "/") M5.Display.setTextColor(GREEN);
+    else M5.Display.setTextColor(ORANGE);
+    
+    M5.Display.setCursor(5, 95);
+    M5.Display.printf("MSG: %s", alertText.c_str());
+}
 
-        // 8a. StickC-Plus2 ส่งเสียงแจ้งเตือนเมื่อได้รับข้อมูล
+// 3. Handler รับ Username จาก Core2
+void handleUsername(AsyncWebServerRequest *request) {
+    String receivedUsername = "";
+    if (request->hasParam("username", true)) {
+        receivedUsername = request->getParam("username", true)->value();
+    } else if (request->hasParam("username", false)) {
+        receivedUsername = request->getParam("username", false)->value();
+    }
+
+    if (receivedUsername != "") {
         M5.Speaker.tone(1500, 150); 
         
-        // 9a. อัพเดทสถานะบนหน้าจอ
+        Serial.printf("[HTTP] Received Username: %s\n", receivedUsername.c_str());
+
         currentUsername = receivedUsername;
-        alertText = "Identity Created Successfully";
-        authenStatus = "x"; 
-        updateDisplay(); 
+        alertText = "Identity Confirmed!";
+        authenStatus = "/"; 
         
-        request->send(200, "text/plain", "Username received.");
+        // ยกธงบอก Loop ให้เปลี่ยนชื่อ
+        newBLEName = receivedUsername;
+        shouldRestartBLE = true; 
+        
+        updateDisplay(); 
+        request->send(200, "text/plain", "OK");
     } else {
-        request->send(400, "text/plain", "Missing Username Parameter.");
+        request->send(400, "text/plain", "Fail: Missing Username");
     }
 }
 
@@ -80,33 +140,57 @@ void handleCoin(AsyncWebServerRequest *request) {
 void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
-    M5.Lcd.setRotation(3); 
+    M5.Display.setRotation(3); 
+    Serial.begin(115200);
 
-    // Assign static IP
-    WiFi.config(local_IP, gateway, subnet);
+    // --- Phase 1: Connecting WiFi ---
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.drawString("Connecting WiFi...", M5.Display.width()/2, M5.Display.height()/2 - 10);
 
-    // 1. เชื่อมต่อ Wi-Fi เข้ากับ SoftAP ของ Core2
+    WiFi.mode(WIFI_STA);
+    
+    WiFi.config(localIP, gateway, subnet);
     WiFi.begin(SSID_AP, PASSWORD_AP);
     
+    Serial.println("[WiFi] Connecting...");
+    
+    M5.Display.setTextDatum(top_left);
+    M5.Display.setCursor(10, M5.Display.height()/2 + 10);
     while (WiFi.status() != WL_CONNECTED) { 
         delay(500);
+        M5.Display.print("."); 
+        Serial.print(".");
     }
+    Serial.println("\n[WiFi] Connected!");
     
-    // เก็บ MAC Address ของตัวเอง
-    myMacAddress = WiFi.macAddress(); 
+    // --- Phase 2: System Ready ---
+    myMacAddress = WiFi.macAddress();
     
-    M5.Lcd.printf("Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-    M5.Lcd.printf("MAC: %s (Target for Station 2)\n", myMacAddress.c_str());
-
-    // 2. ตั้งค่า Server เพื่อรอรับ Request จาก Core2
     stickCServer.on("/set_username", HTTP_POST, handleUsername);
+    stickCServer.on("/set_username", HTTP_GET, handleUsername); 
     stickCServer.on("/add_coin", HTTP_POST, handleCoin);
     stickCServer.begin();
 
-    // แสดง UI เริ่มต้น
+    // เริ่ม BLE ครั้งแรก
+    startBLE("GUEST-PLAYER");
+
     updateDisplay();
 }
 
 void loop() {
+    // --- โซนทำงานหนัก (ปลอดภัย ไม่รีเซ็ต) ---
+    if (shouldRestartBLE) {
+        delay(100);
+        M5.Speaker.tone(2000, 300);
+
+        // เรียกฟังก์ชันเปลี่ยนชื่อแบบใหม่ (ที่ไม่พัง)
+        startBLE(newBLEName);
+        
+        shouldRestartBLE = false; 
+    }
+    
     M5.update();
 }

@@ -5,6 +5,7 @@
 // สร้าง Canvas 2 ใบ (ใบใหญ่=เมนู, ใบเล็ก=Status)
 M5EPD_Canvas canvas(&M5.EPD);        
 M5EPD_Canvas status_canvas(&M5.EPD); 
+M5EPD_Canvas choice_canvas(&M5.EPD); 
 
 int selectedChoice = 0;
 bool submitted = false;
@@ -98,9 +99,6 @@ void updateStatus(String msg) {
     status_canvas.drawString(msg, 20, 20);
 
     status_canvas.pushCanvas(0, 700, UPDATE_MODE_DU4); 
-
-    Serial.print("Status: ");
-    Serial.println(msg);
 }
 
 void sumbitStatus(String msg1, String msg2) {
@@ -110,9 +108,34 @@ void sumbitStatus(String msg1, String msg2) {
     status_canvas.drawString(msg1, 20, 20);
     status_canvas.drawString(msg2, 23, 50);
 
-    status_canvas.pushCanvas(0, 700, UPDATE_MODE_DU4); 
+    status_canvas.pushCanvas(0, 700, UPDATE_MODE_DU4);
 
     Serial.println("Submitted");
+}
+
+void selectButton(int choice) {
+    // int yRect = choice * 100 + 30;
+    // int yString = choice * 100 + 55;
+    // choice_canvas.createCanvas(540, 80);
+    // choice_canvas.fillRect(0, yRect, 540, 80, 15);
+    // choice_canvas.setTextColor(0, 15);
+    // choice_canvas.setTextSize(3);
+    // choice_canvas.drawString(String(choice) + ". " + choiceName(choice), 30, yString);
+    // choice_canvas.drawString("   --> " + choiceCoin(choice) + " CCoin", 30, yString + 30);
+    // choice_canvas.pushCanvas(0, yRect, UPDATE_MODE_DU4);
+    // Serial.println("selectCanvas: " + choiceName(choice));
+}
+
+void defaultSelectButton(int choice) {
+    // int yRect = choice * 100 + 30;
+    // int yString = choice * 100 + 55;
+    // String name = String(choice) + ". " + choiceName(choice);
+    // String coin = "   --> " + choiceCoin(choice) + " CCoin";
+    // choice_canvas.createCanvas(540, 80);
+    // choice_canvas.drawRect(0, yRect, 540, 80, 15);
+    // choice_canvas.drawString(name, 30, yString);
+    // choice_canvas.drawString(coin, 30, yString + 30);
+    // choice_canvas.pushCanvas(0, yRect, UPDATE_MODE_DU4);
 }
 
 bool sendReceiveCoin(String coin) {
@@ -166,19 +189,35 @@ void loop() {
             // Serial.printf("X: %d, Y: %d\n", x, y);
             if (!submitted) {
                 if (x >= 130 && x <= 229) {
+                    if (selectedChoice > 0) {
+                        defaultSelectButton(selectedChoice);
+                    }
                     selectedChoice = 1;
+                    selectButton(selectedChoice);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 else if (x >= 230 && x <= 329) {
+                    if (selectedChoice > 0) {
+                        defaultSelectButton(selectedChoice);
+                    }
                     selectedChoice = 2;
+                    selectButton(selectedChoice);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 else if (x >= 330 && x <= 410) {
+                    if (selectedChoice > 0) {
+                        defaultSelectButton(selectedChoice);
+                    }
                     selectedChoice = 3;
+                    selectButton(selectedChoice);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 else if (x >= 430 && x <= 510) {
+                    if (selectedChoice > 0) {
+                        defaultSelectButton(selectedChoice);
+                    }
                     selectedChoice = 4;
+                    selectButton(selectedChoice);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 // ปุ่ม Submit (เช็ค X ให้อยู่ในกรอบ 120-420)
@@ -199,6 +238,8 @@ void loop() {
                 }
             }
             delay(100);
+            x = 0;
+            y = 0;
         }
     }
 }
