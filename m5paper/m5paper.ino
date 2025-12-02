@@ -50,26 +50,6 @@ void drawMenu() {
 
     canvas.setTextSize(3);
 
-    // ข้อ 1
-    // canvas.drawRect(0, 130, 540, 80, 15);
-    // canvas.drawString("1. " + choiceName(1), 30, 155); 
-    // canvas.drawString("   --> " + choiceCoins(1) + " CCoin", 30, 185);
-
-    // ข้อ 2
-    // canvas.drawRect(0, 230, 540, 80, 15);
-    // canvas.drawString("2. " + choiceName(2), 30, 255);
-    // canvas.drawString("   --> " + choiceCoins(2) + " CCoin", 30, 285);
-
-    // ข้อ 3
-    // canvas.drawRect(0, 330, 540, 80, 15);
-    // canvas.drawString("3. " + choiceName(3), 30, 355);
-    // canvas.drawString("   --> " + choiceCoins(3) + " CCoin", 30, 385);
-
-    // ข้อ 4
-    // canvas.drawRect(0, 430, 540, 80, 15);
-    // canvas.drawString("4. " + choiceName(4), 30, 455);
-    // canvas.drawString("   --> " + choiceCoins(4) + " CCoin", 30, 485);
-
     int yRect = 130;
     int yString = 155;
     for (int i = 1; i <= 4; i++) {
@@ -78,6 +58,7 @@ void drawMenu() {
         canvas.drawString(name, 30, yString);
         String coin = "   --> " + choiceCoin(i) + " CCoin";
         canvas.drawString(coin, 30, yString + 30);
+        defaultSelectButton(i);
         yRect += 100;
         yString += 100;
     }
@@ -114,37 +95,23 @@ void sumbitStatus(String msg1, String msg2) {
 }
 
 void selectButton(int choice) {
-    // int yRect = choice * 100 + 30;
-    // int yString = choice * 100 + 55;
-    // choice_canvas.createCanvas(540, 80);
-    // choice_canvas.fillRect(0, yRect, 540, 80, 15);
-    // choice_canvas.setTextColor(0, 15);
-    // choice_canvas.setTextSize(3);
-    // choice_canvas.drawString(String(choice) + ". " + choiceName(choice), 30, yString);
-    // choice_canvas.drawString("   --> " + choiceCoin(choice) + " CCoin", 30, yString + 30);
-    // choice_canvas.pushCanvas(0, yRect, UPDATE_MODE_DU4);
-    // Serial.println("selectCanvas: " + choiceName(choice));
+    int ySelector = choice * 100 + 70;
+    canvas.fillCircle(490, ySelector, 30, 15);
 }
 
 void defaultSelectButton(int choice) {
-    // int yRect = choice * 100 + 30;
-    // int yString = choice * 100 + 55;
-    // String name = String(choice) + ". " + choiceName(choice);
-    // String coin = "   --> " + choiceCoin(choice) + " CCoin";
-    // choice_canvas.createCanvas(540, 80);
-    // choice_canvas.drawRect(0, yRect, 540, 80, 15);
-    // choice_canvas.drawString(name, 30, yString);
-    // choice_canvas.drawString(coin, 30, yString + 30);
-    // choice_canvas.pushCanvas(0, yRect, UPDATE_MODE_DU4);
+    int ySelector = choice * 100 + 70;
+    canvas.fillCircle(490, ySelector, 30, 0);
+    canvas.drawCircle(490, ySelector, 30, 15);
 }
 
 bool sendReceiveCoin(String coin) {
     HTTPClient http;
 
-    String url = "http://" + String(stickc_ip) + ":" + String(port) + "/add_coin";
+    String url = "http://" + String(stickc_ip) + ":" + String(port) + "/set_coins";
     http.begin(url);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    String postData = "value=" + coin;
+    String postData = "coins=" + coin;
 
     int code = http.POST(postData);
     String response = http.getString();
@@ -188,36 +155,40 @@ void loop() {
 
             // Serial.printf("X: %d, Y: %d\n", x, y);
             if (!submitted) {
-                if (x >= 130 && x <= 229) {
+                if (selectedChoice != 1 && x >= 130 && x <= 229) {
                     if (selectedChoice > 0) {
                         defaultSelectButton(selectedChoice);
                     }
                     selectedChoice = 1;
                     selectButton(selectedChoice);
+                    canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
-                else if (x >= 230 && x <= 329) {
+                else if (selectedChoice != 2 && x >= 230 && x <= 329) {
                     if (selectedChoice > 0) {
                         defaultSelectButton(selectedChoice);
                     }
                     selectedChoice = 2;
                     selectButton(selectedChoice);
+                    canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
-                else if (x >= 330 && x <= 410) {
+                else if (selectedChoice != 3 && x >= 330 && x <= 410) {
                     if (selectedChoice > 0) {
                         defaultSelectButton(selectedChoice);
                     }
                     selectedChoice = 3;
                     selectButton(selectedChoice);
+                    canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
-                else if (x >= 430 && x <= 510) {
+                else if (selectedChoice != 4 && x >= 430 && x <= 510) {
                     if (selectedChoice > 0) {
                         defaultSelectButton(selectedChoice);
                     }
                     selectedChoice = 4;
                     selectButton(selectedChoice);
+                    canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
                     updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 // ปุ่ม Submit (เช็ค X ให้อยู่ในกรอบ 120-420)
