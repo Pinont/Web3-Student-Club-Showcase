@@ -11,8 +11,8 @@ int selectedChoice = 0;
 bool submitted = false;
 
 const char* ssid = "Web3Showcase_AP";
-const char* password = "12345678";
-const char* stickc_ip = "192.168.4.2";
+const char* password = NULL;
+char* stickc_ip = "192.168.4.2";
 const char* port = "88";
 
 String choiceName(int choice) {
@@ -162,7 +162,6 @@ void loop() {
                     selectedChoice = 1;
                     selectButton(selectedChoice);
                     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
-                    updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 else if (selectedChoice != 2 && x >= 230 && x <= 329) {
                     if (selectedChoice > 0) {
@@ -171,7 +170,6 @@ void loop() {
                     selectedChoice = 2;
                     selectButton(selectedChoice);
                     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
-                    updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 else if (selectedChoice != 3 && x >= 330 && x <= 410) {
                     if (selectedChoice > 0) {
@@ -180,7 +178,6 @@ void loop() {
                     selectedChoice = 3;
                     selectButton(selectedChoice);
                     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
-                    updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 else if (selectedChoice != 4 && x >= 430 && x <= 510) {
                     if (selectedChoice > 0) {
@@ -189,7 +186,6 @@ void loop() {
                     selectedChoice = 4;
                     selectButton(selectedChoice);
                     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
-                    updateStatus("Selected: " + choiceName(selectedChoice));
                 }
                 // ปุ่ม Submit (เช็ค X ให้อยู่ในกรอบ 120-420)
                 else if (x >= 550 && x <= 650 && y >= 120 && y <= 420) { // 120 <= y <= 420 && 550 <= x <= 650
