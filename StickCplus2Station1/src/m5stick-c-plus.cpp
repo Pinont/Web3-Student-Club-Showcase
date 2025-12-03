@@ -2,217 +2,218 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <BLEDevice.h> 
+#include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
 
-// --- CENTRALIZED CONFIGURATION ---
-const char *SSID_AP = "Web3Showcase_AP";
-const char *PASSWORD_AP = "12345678";
-const int LOCAL_PORT = 88; 
+// --- CENTRALIZED CONFIGURATION (ย้ายมาไว้ที่นี่เพื่อแก้ปัญหาตัวแปรหาย) ---
+const char *WIFI_SSID = "Web3Showcase_AP";
+const char *WIFI_PASS = NULL; // รหัสผ่าน
+
+// IP Configuration
+const IPAddress IP_CORE2(192, 168, 4, 1);   // Gateway
+const IPAddress IP_STICKC(192, 168, 4, 2);  // This Device (StickC)
+const IPAddress SUBNET(255, 255, 255, 0); 
+
+// BLE Configuration
+const char* BLE_DEVICE_NAME = "M5_Showcase_User";
+const char* BLE_SERVICE_UUID = "1234";     
+
+const int LOCAL_PORT = 80;
 
 // --- GLOBALS ---
-AsyncWebServer stickCServer(LOCAL_PORT);
-String currentUsername = "Not Registered";
-String authenStatus = "X"; 
+AsyncWebServer server(LOCAL_PORT);
+
+// State Variables
+String username = "NOT SET";
 int ccoin = 0;
-String alertText = "Waiting for Identity...";
-String myMacAddress = "";
+String auth_status = "X";
+String alert_msg = "Waiting...";
+bool needUpdate = true;
 
-// 🚩 Flags สำหรับส่งงานไปทำใน loop() (แก้ WDT Reset)
-bool flagNewUsername = false; 
-bool flagAuthStart = false;
-bool flagAuthComplete = false;
-bool flagSetCoins = false;
-
-// ตัวแปรชั่วคราวรับค่าจาก Handler
-String tempUsername = "";
-String tempSenderMac = "";
-int tempCoins = 0;
-
-// ตัวแปร BLE
-BLEServer *pServer = NULL;
-BLEAdvertising *pAdvertising = NULL;
-
-// --- FUNCTIONS ---
-
-void startBLE(String name) {
-    if (pServer != NULL) {
-        BLEDevice::deinit(true);
-    }
-    BLEDevice::init(name.c_str()); 
-    pServer = BLEDevice::createServer();
-    pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID("1234"); 
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06);  
-    pAdvertising->setMinPreferred(0x12);
-    BLEDevice::startAdvertising();
-    Serial.printf("[BLE] Advertising Started as: %s\n", name.c_str());
-}
-
-void updateDisplay() {
+// --- UI FUNCTIONS ---
+void drawScreen() {
+    M5.Display.startWrite();
     M5.Display.fillScreen(BLACK);
-    M5.Display.setTextDatum(top_left);
-    M5.Display.setFont(&fonts::Font2);
+    
+    // Header
+    M5.Display.fillRect(0, 0, 240, 30, 0x10A2); // Dark Blue
     M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(1.5);
+    M5.Display.setCursor(5, 7);
+    M5.Display.print("WEB3 ID: WALLET");
+
+    // Username
+    M5.Display.setCursor(10, 45);
+    M5.Display.setTextColor(LIGHTGREY);
+    M5.Display.setTextSize(1);
+    M5.Display.print("USERNAME:");
     
-    M5.Display.setCursor(5, 5); M5.Display.print("MAC: "); M5.Display.println(myMacAddress);
-    
-    M5.Display.setCursor(5, 25); M5.Display.print("User: ");
-    M5.Display.setTextColor(currentUsername == "Not Registered" ? ORANGE : GREEN);
-    M5.Display.println(currentUsername);
-    
-    M5.Display.setCursor(5, 50); M5.Display.setTextColor(WHITE); M5.Display.print("Status: ");
-    M5.Display.setTextColor(authenStatus == "✓" ? GREEN : RED);
-    M5.Display.println(authenStatus);
-    
-    M5.Display.setCursor(5, 75); M5.Display.setTextColor(YELLOW); M5.Display.printf("CCoin: %d\n", ccoin);
-    
-    M5.Display.setCursor(5, 100); M5.Display.setTextColor(MAGENTA); M5.Display.printf("MSG: %s", alertText.c_str());
+    M5.Display.setCursor(10, 60);
+    M5.Display.setTextColor(CYAN);
+    M5.Display.setTextSize(2);
+    M5.Display.print(username);
+
+    // Coin & Status
+    M5.Display.setCursor(10, 95);
+    M5.Display.setTextColor(YELLOW);
+    M5.Display.setTextSize(1.5);
+    M5.Display.printf("COIN: %d", ccoin);
+
+    M5.Display.setCursor(120, 95);
+    if (auth_status == "X") M5.Display.setTextColor(RED);
+    else M5.Display.setTextColor(GREEN);
+    M5.Display.printf("AUTH: %s", auth_status.c_str());
+
+    // Footer Alert
+    M5.Display.fillRect(0, 115, 240, 20, 0x2104); // Dark Grey
+    M5.Display.setCursor(5, 118);
+    M5.Display.setTextColor(ORANGE);
+    M5.Display.setTextSize(1);
+    M5.Display.print(alert_msg);
+
+    M5.Display.endWrite();
+    needUpdate = false;
 }
 
-void handleGetInfo(AsyncWebServerRequest *request) {
-    String response = "{\"status\":\"StickC-Plus2 Ready\",\"ip\":\"" + WiFi.localIP().toString() + "\"}";
-    request->send(200, "application/json", response);
-}
+// --- WIFI FUNCTIONS ---
+void connectWiFi() {
+    if (WiFi.status() == WL_CONNECTED) return;
 
-// **[HANDLER]** รับ Username (ทำงานเร็วที่สุดเท่าที่จะทำได้)
-void handleUsername(AsyncWebServerRequest *request) {
-    if (request->hasParam("username", true)) {
-        // 1. รับค่าและเก็บใส่ตัวแปรชั่วคราว
-        tempUsername = request->getParam("username", true)->value();
-        
-        // 2. ยกธงบอก loop() ว่ามีงานเข้า
-        flagNewUsername = true; 
-        
-        // 3. ตอบกลับทันที (ไม่ทำ Display/Sound ตรงนี้)
-        request->send(200, "text/plain", "OK");
-        Serial.println("[HTTP] Username received -> Flag Set");
-    } else {
-        request->send(400, "text/plain", "Fail");
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setCursor(10, 60);
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(1.5);
+    M5.Display.print("Connecting to Core2...");
+    
+    // Config Static IP
+    WiFi.config(IP_STICKC, IP_CORE2, SUBNET, IP_CORE2);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    
+    int attempt = 0;
+    while (WiFi.status() != WL_CONNECTED && attempt < 20) {
+        delay(500);
+        M5.Display.print(".");
+        attempt++;
     }
-}
 
-// **[HANDLER]** Auth Start
-void handleAuthStart(AsyncWebServerRequest *request) {
-    tempSenderMac = request->hasParam("sender_mac") ? request->getParam("sender_mac")->value() : "Unknown";
-    flagAuthStart = true; // ยกธง
-    request->send(200, "text/plain", "Auth Started");
-}
-
-// **[HANDLER]** Auth Complete
-void handleAuthComplete(AsyncWebServerRequest *request) {
-    tempSenderMac = request->hasParam("sender_mac") ? request->getParam("sender_mac")->value() : "Unknown";
-    flagAuthComplete = true; // ยกธง
-    request->send(200, "text/plain", "Auth Completed");
-}
-
-// **[HANDLER]** Set Coins
-void handleSetCoins(AsyncWebServerRequest *request) {
-    if (request->hasParam("coins", true)) {
-        tempCoins = request->getParam("coins", true)->value().toInt();
-        flagSetCoins = true; // ยกธง
-        request->send(200, "text/plain", "OK");
+    if (WiFi.status() == WL_CONNECTED) {
+        needUpdate = true;
     } else {
-        request->send(400, "text/plain", "Fail");
+        M5.Display.fillScreen(RED);
+        M5.Display.setCursor(10, 60);
+        M5.Display.print("WiFi Failed! Retrying...");
+        delay(1000);
     }
 }
 
 // --- SETUP ---
 void setup() {
-    Serial.begin(115200);
-    delay(1000);
-    
     auto cfg = M5.config();
     M5.begin(cfg);
-    M5.Display.setRotation(3); 
-    
-    M5.Display.setBrightness(128);
-    M5.Display.wakeup(); // ใช้ wakeup แทน power(true) เพื่อความชัวร์
+    M5.Display.setRotation(3);
 
-    // WiFi
-    M5.Display.fillScreen(BLACK);
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.setTextColor(CYAN);
-    M5.Display.setTextDatum(middle_center);
-    M5.Display.drawString("Connecting WiFi...", M5.Display.width()/2, M5.Display.height()/2);
-    
-    WiFi.mode(WIFI_STA); 
-    WiFi.begin(SSID_AP, PASSWORD_AP);
-    
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) { 
-        delay(500);
-        attempts++;
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-        myMacAddress = WiFi.macAddress();
-    }
+    // 1. Connect WiFi
+    connectWiFi();
 
-    // Server
-    stickCServer.on("/get_info", HTTP_GET, handleGetInfo);
-    stickCServer.on("/set_username", HTTP_POST, handleUsername); 
-    stickCServer.on("/set_coins", HTTP_POST, handleSetCoins); 
-    stickCServer.on("/auth_start", HTTP_GET, handleAuthStart);   
-    stickCServer.on("/auth_complete", HTTP_GET, handleAuthComplete); 
-    stickCServer.begin();
+    // 2. Setup BLE
+    BLEDevice::init(BLE_DEVICE_NAME);
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(BLE_SERVICE_UUID); // ใช้งานตัวแปรที่ประกาศไว้ข้างบน
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06); 
+    pAdvertising->start();
+
+    // 3. API Routes
     
-    startBLE("GUEST-PLAYER");
-    updateDisplay();
+    // Station 1: Set User
+    server.on("/set_user", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasArg("name")) {
+            username = request->arg("name");
+            ccoin = 0;
+            auth_status = "X";
+            alert_msg = "Identity Created!";
+            M5.Speaker.tone(1000, 100); delay(150);
+            M5.Speaker.tone(2000, 300);
+            needUpdate = true;
+            request->send(200, "text/plain", "OK");
+        } else request->send(400);
+    });
+
+    // Station 2: Auth
+    server.on("/auth_start", HTTP_GET, [](AsyncWebServerRequest *request){
+        alert_msg = "AUTH... In Progress";
+        M5.Speaker.tone(1500, 500);
+        needUpdate = true;
+        request->send(200, "text/plain", "Started");
+    });
+
+    server.on("/auth_success", HTTP_GET, [](AsyncWebServerRequest *request){
+        auth_status = "/";
+        alert_msg = "Auth Successful!";
+        M5.Speaker.tone(2000, 100); delay(100);
+        M5.Speaker.tone(3000, 300);
+        needUpdate = true;
+        request->send(200, "text/plain", "Verified");
+    });
+
+    // Station 3: Earn
+    server.on("/earn", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasArg("amount")) {
+            int amt = request->arg("amount").toInt();
+            ccoin += amt;
+            alert_msg = "Received " + String(amt) + " Coin";
+            M5.Speaker.tone(4000, 100); delay(50);
+            M5.Speaker.tone(5000, 100);
+            needUpdate = true;
+            request->send(200, "text/plain", "OK");
+        } else request->send(400);
+    });
+
+    // Station 4: Spend
+    server.on("/spend", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasArg("amount")) {
+            int amt = request->arg("amount").toInt();
+            if(ccoin >= amt) {
+                ccoin -= amt;
+                alert_msg = "Spent " + String(amt) + " Coin";
+                M5.Speaker.tone(1500, 300);
+                needUpdate = true;
+                request->send(200, "text/plain", "OK");
+            } else {
+                alert_msg = "Not Enough Coin!";
+                M5.Speaker.tone(200, 500);
+                needUpdate = true;
+                request->send(402, "text/plain", "Fail");
+            }
+        } else request->send(400);
+    });
+
+    // Reset
+    server.on("/reset", HTTP_GET, [](AsyncWebServerRequest *request){
+        username = "NOT SET";
+        ccoin = 0;
+        auth_status = "X";
+        alert_msg = "System Reset";
+        M5.Speaker.tone(500, 500);
+        needUpdate = true;
+        request->send(200, "text/plain", "OK");
+    });
+
+    server.begin();
+    needUpdate = true;
 }
 
-// --- LOOP ---
-// งานหนักทั้งหมดทำที่นี่ (ปลอดภัยจาก WDT)
 void loop() {
     M5.update();
     
-    // 1. Process New Username
-    if (flagNewUsername) {
-        flagNewUsername = false; // เอาธงลง
-        
-        currentUsername = tempUsername;
-        Serial.printf("[LOOP] Processing Username: %s\n", currentUsername.c_str());
-        
-        M5.Speaker.tone(1500, 150); 
-        delay(200); // delay ใน loop ปลอดภัยกว่าใน handler
-        M5.Speaker.tone(2000, 300);
-        
-        alertText = "Identity Confirmed!";
-        authenStatus = "X";
-        updateDisplay(); 
-        
-        // BLE Init (งานหนักที่สุด)
-        startBLE(currentUsername); 
-        Serial.println("[LOOP] BLE Updated");
+    // Check WiFi
+    if (WiFi.status() != WL_CONNECTED) {
+        connectWiFi();
     }
 
-    // 2. Process Auth Start
-    if (flagAuthStart) {
-        flagAuthStart = false;
-        M5.Speaker.tone(800, 100);
-        alertText = "AUTH... (via " + tempSenderMac + ")";
-        authenStatus = "?";
-        updateDisplay();
+    if (needUpdate) {
+        drawScreen();
     }
-
-    // 3. Process Auth Complete
-    if (flagAuthComplete) {
-        flagAuthComplete = false;
-        M5.Speaker.tone(1500, 200);
-        authenStatus = "✓";
-        alertText = "Authentication SUCCESS!";
-        updateDisplay();
-    }
-
-    // 4. Process Set Coins
-    if (flagSetCoins) {
-        flagSetCoins = false;
-        ccoin = tempCoins;
-        alertText = "CCoin updated!";
-        updateDisplay();
-    }
-    
-    delay(10); // พักเล็กน้อยให้ CPU เย็นลง
 }
