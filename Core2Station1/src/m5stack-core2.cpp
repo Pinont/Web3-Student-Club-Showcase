@@ -1,451 +1,341 @@
-/*
- * STATION 1 - Identity Creation (M5Stack Core2)
- * 
- * หน้าที่:
- * - สร้าง WiFi Access Point (SoftAP)
- * - แสดง QR Code ที่มี SSID และข้อมูลการเชื่อมต่อ
- * - รัน WebServer สำหรับ Captive Portal
- * - รับ Username จาก HTTP POST
- * - ส่ง Username ไปยัง StickC-Plus2 ผ่าน HTTP
- */
+#include <M5Core2.h>
+#include <WiFi.h>
+#include <DNSServer.h>
+#include <WebServer.h>
+#include <esp_now.h>
+#include <SPIFFS.h>
+#include "../include/ShowcaseProtocol.h"
 
- #include <M5Core2.h>
- #include <WiFi.h>
- #include <ESPAsyncWebServer.h>
- #include <qrcode.h>
- #include <HTTPClient.h>
- #include <ArduinoJson.h>
- 
- // ========== ค่าคงที่และตัวแปร ==========
- const char* AP_SSID = "Web3-Showcase";
- const char* AP_PASSWORD = "web3club2024";
- const IPAddress LOCAL_IP(192, 168, 4, 1);
- const IPAddress GATEWAY(192, 168, 4, 1);
- const IPAddress SUBNET(255, 255, 255, 0);
- 
- // StickC-Plus2 IP Address (ต้องตรงกับที่ StickC กำหนด)
- const char* STICKC_IP = "http://192.168.4.100";
- 
- AsyncWebServer server(80);
- String currentUsername = "";
- bool newUserRegistered = false;
- 
- // ========== HTML สำหรับ Captive Portal ==========
- const char index_html[] PROGMEM = R"rawliteral(
- <!DOCTYPE html>
- <html>
- <head>
-     <meta charset="UTF-8">
-     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-     <title>Web3 Showcase - Identity Creation</title>
-     <style>
-         * {
-             margin: 0;
-             padding: 0;
-             box-sizing: border-box;
-         }
-         body {
-             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-             min-height: 100vh;
-             display: flex;
-             justify-content: center;
-             align-items: center;
-             padding: 20px;
-         }
-         .container {
-             background: white;
-             padding: 40px 30px;
-             border-radius: 20px;
-             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-             max-width: 400px;
-             width: 100%;
-             animation: slideIn 0.5s ease-out;
-         }
-         @keyframes slideIn {
-             from {
-                 opacity: 0;
-                 transform: translateY(-30px);
-             }
-             to {
-                 opacity: 1;
-                 transform: translateY(0);
-             }
-         }
-         h1 {
-             color: #667eea;
-             font-size: 28px;
-             margin-bottom: 10px;
-             text-align: center;
-         }
-         .subtitle {
-             color: #666;
-             font-size: 14px;
-             text-align: center;
-             margin-bottom: 30px;
-         }
-         .form-group {
-             margin-bottom: 25px;
-         }
-         label {
-             display: block;
-             color: #333;
-             font-weight: 600;
-             margin-bottom: 8px;
-             font-size: 14px;
-         }
-         input[type="text"] {
-             width: 100%;
-             padding: 12px 15px;
-             border: 2px solid #e0e0e0;
-             border-radius: 10px;
-             font-size: 16px;
-             transition: all 0.3s ease;
-         }
-         input[type="text"]:focus {
-             outline: none;
-             border-color: #667eea;
-             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-         }
-         button {
-             width: 100%;
-             padding: 14px;
-             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-             color: white;
-             border: none;
-             border-radius: 10px;
-             font-size: 16px;
-             font-weight: 600;
-             cursor: pointer;
-             transition: transform 0.2s ease, box-shadow 0.2s ease;
-         }
-         button:hover {
-             transform: translateY(-2px);
-             box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
-         }
-         button:active {
-             transform: translateY(0);
-         }
-         .info {
-             background: #f0f4ff;
-             padding: 15px;
-             border-radius: 10px;
-             margin-top: 20px;
-             font-size: 13px;
-             color: #666;
-             text-align: center;
-         }
-         .success-message {
-             display: none;
-             background: #4caf50;
-             color: white;
-             padding: 15px;
-             border-radius: 10px;
-             margin-top: 20px;
-             text-align: center;
-             font-weight: 600;
-         }
-         .error-message {
-             display: none;
-             background: #f44336;
-             color: white;
-             padding: 15px;
-             border-radius: 10px;
-             margin-top: 20px;
-             text-align: center;
-             font-weight: 600;
-         }
-     </style>
- </head>
- <body>
-     <div class="container">
-         <h1>🌐 Web3 Showcase</h1>
-         <p class="subtitle">Create Your Digital Identity</p>
-         
-         <form id="usernameForm">
-             <div class="form-group">
-                 <label for="username">Enter Your Username</label>
-                 <input type="text" id="username" name="username" 
-                        placeholder="e.g., satoshi_21" 
-                        required minlength="3" maxlength="20">
-             </div>
-             <button type="submit">Create Identity 🚀</button>
-         </form>
-         
-         <div class="success-message" id="successMsg">
-             ✓ Identity created successfully!
-         </div>
-         <div class="error-message" id="errorMsg">
-             ✗ Failed to create identity. Please try again.
-         </div>
-         
-         <div class="info">
-             💡 Your username will be used across all stations
-         </div>
-     </div>
- 
-     <script>
-         document.getElementById('usernameForm').addEventListener('submit', async function(e) {
-             e.preventDefault();
-             
-             const username = document.getElementById('username').value.trim();
-             const successMsg = document.getElementById('successMsg');
-             const errorMsg = document.getElementById('errorMsg');
-             const submitBtn = this.querySelector('button');
-             
-             // Validate username
-             if (username.length < 3) {
-                 errorMsg.textContent = '✗ Username must be at least 3 characters';
-                 errorMsg.style.display = 'block';
-                 successMsg.style.display = 'none';
-                 return;
-             }
-             
-             // Disable button during submission
-             submitBtn.disabled = true;
-             submitBtn.textContent = 'Creating...';
-             
-             try {
-                 const response = await fetch('/register', {
-                     method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
-                     },
-                     body: JSON.stringify({ username: username })
-                 });
-                 
-                 if (response.ok) {
-                     successMsg.style.display = 'block';
-                     errorMsg.style.display = 'none';
-                     submitBtn.textContent = 'Identity Created ✓';
-                     
-                     // Reset form after 3 seconds
-                     setTimeout(() => {
-                         document.getElementById('username').value = '';
-                         submitBtn.disabled = false;
-                         submitBtn.textContent = 'Create Identity 🚀';
-                         successMsg.style.display = 'none';
-                     }, 3000);
-                 } else {
-                     throw new Error('Registration failed');
-                 }
-             } catch (error) {
-                 errorMsg.style.display = 'block';
-                 successMsg.style.display = 'none';
-                 submitBtn.disabled = false;
-                 submitBtn.textContent = 'Create Identity 🚀';
-             }
-         });
-     </script>
- </body>
- </html>
- )rawliteral";
- 
- // ========== ฟังก์ชันสร้างและแสดง QR Code ==========
- void displayQRCode() {
-     M5.Lcd.fillScreen(TFT_WHITE);
-     
-     // Header
-     M5.Lcd.setTextColor(TFT_PURPLE, TFT_WHITE);
-     M5.Lcd.setTextSize(2);
-     M5.Lcd.setTextDatum(MC_DATUM);
-     M5.Lcd.drawString("Web3 Showcase", 160, 20);
-     
-     M5.Lcd.setTextSize(1);
-     M5.Lcd.setTextColor(TFT_DARKGREY, TFT_WHITE);
-     M5.Lcd.drawString("Identity Creation Station", 160, 45);
-     
-     // สร้าง QR Code
-     QRCode qrcode;
-     uint8_t qrcodeData[qrcode_getBufferSize(5)];
-     
-     // สร้าง URL สำหรับ Captive Portal
-     String qrText = "WIFI:T:WPA;S:" + String(AP_SSID) + ";P:" + String(AP_PASSWORD) + ";;";
-     
-     qrcode_initText(&qrcode, qrcodeData, 5, 0, qrText.c_str());
-     
-     // วาด QR Code (ขนาด 4x4 pixels ต่อ module)
-     int scale = 4;
-     int offsetX = (320 - qrcode.size * scale) / 2;
-     int offsetY = 70;
-     
-     M5.Lcd.fillRect(offsetX - 10, offsetY - 10, 
-                     qrcode.size * scale + 20, 
-                     qrcode.size * scale + 20, TFT_WHITE);
-     
-     for (uint8_t y = 0; y < qrcode.size; y++) {
-         for (uint8_t x = 0; x < qrcode.size; x++) {
-             if (qrcode_getModule(&qrcode, x, y)) {
-                 M5.Lcd.fillRect(offsetX + x * scale, 
-                                offsetY + y * scale, 
-                                scale, scale, TFT_BLACK);
-             }
-         }
-     }
-     
-     // แสดงข้อมูล WiFi
-     M5.Lcd.setTextColor(TFT_BLACK, TFT_WHITE);
-     M5.Lcd.setTextSize(1);
-     M5.Lcd.drawString("Scan to Connect", 160, offsetY + qrcode.size * scale + 20);
-     
-     M5.Lcd.setTextColor(TFT_DARKGREY, TFT_WHITE);
-     M5.Lcd.drawString("SSID: " + String(AP_SSID), 160, offsetY + qrcode.size * scale + 40);
-     M5.Lcd.drawString("Password: " + String(AP_PASSWORD), 160, offsetY + qrcode.size * scale + 55);
-     
-     // Footer - Status
-     M5.Lcd.fillRect(0, 210, 320, 30, TFT_PURPLE);
-     M5.Lcd.setTextColor(TFT_WHITE, TFT_PURPLE);
-     M5.Lcd.drawString("Waiting for participants...", 160, 225);
- }
- 
- // ========== ฟังก์ชันส่ง Username ไป StickC ==========
- void sendUsernameToStickC(String username) {
-     HTTPClient http;
-     
-     String url = String(STICKC_IP) + "/register";
-     http.begin(url);
-     http.addHeader("Content-Type", "application/json");
-     
-     StaticJsonDocument<200> doc;
-     doc["username"] = username;
-     
-     String jsonString;
-     serializeJson(doc, jsonString);
-     
-     int httpCode = http.POST(jsonString);
-     
-     if (httpCode > 0) {
-         Serial.printf("✓ Sent username to StickC: %s (HTTP %d)\n", 
-                       username.c_str(), httpCode);
-     } else {
-         Serial.printf("✗ Failed to send to StickC: %s\n", 
-                       http.errorToString(httpCode).c_str());
-     }
-     
-     http.end();
- }
- 
- // ========== ฟังก์ชันแสดงหน้าจอเมื่อมี User ใหม่ ==========
- void displayNewUserRegistered(String username) {
-     M5.Lcd.fillScreen(TFT_GREEN);
-     
-     M5.Lcd.setTextColor(TFT_WHITE, TFT_GREEN);
-     M5.Lcd.setTextSize(2);
-     M5.Lcd.setTextDatum(MC_DATUM);
-     M5.Lcd.drawString("Identity Created!", 160, 80);
-     
-     M5.Lcd.setTextSize(3);
-     M5.Lcd.drawString(username, 160, 120);
-     
-     M5.Lcd.setTextSize(1);
-     M5.Lcd.drawString("Welcome to Web3 Showcase", 160, 160);
-     
-     delay(3000);
-     displayQRCode();
- }
- 
- // ========== Setup ==========
- void setup() {
-     M5.begin();
-     Serial.begin(115200);
-     
-     M5.Lcd.fillScreen(TFT_BLACK);
-     M5.Lcd.setTextColor(TFT_WHITE);
-     M5.Lcd.setTextSize(2);
-     M5.Lcd.setTextDatum(MC_DATUM);
-     M5.Lcd.drawString("Initializing...", 160, 120);
-     
-     // สร้าง WiFi Access Point
-     WiFi.mode(WIFI_AP);
-     WiFi.softAPConfig(LOCAL_IP, GATEWAY, SUBNET);
-     WiFi.softAP(AP_SSID, AP_PASSWORD);
-     
-     Serial.println("\n========================================");
-     Serial.println("STATION 1 - Identity Creation (Core2)");
-     Serial.println("========================================");
-     Serial.printf("AP SSID: %s\n", AP_SSID);
-     Serial.printf("AP Password: %s\n", AP_PASSWORD);
-     Serial.printf("AP IP: %s\n", WiFi.softAPIP().toString().c_str());
-     Serial.println("========================================\n");
-     
-     // ตั้งค่า Web Server Routes
-     
-     // Route: หน้าแรก (Captive Portal)
-     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-         request->send_P(200, "text/html", index_html);
-     });
-     
-     // Route: รับ Username จาก Form
-     server.on("/register", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
-         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
-             
-             StaticJsonDocument<200> doc;
-             DeserializationError error = deserializeJson(doc, data);
-             
-             if (error) {
-                 request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-                 return;
-             }
-             
-             String username = doc["username"].as<String>();
-             username.trim();
-             
-             if (username.length() < 3 || username.length() > 20) {
-                 request->send(400, "application/json", 
-                             "{\"error\":\"Username must be 3-20 characters\"}");
-                 return;
-             }
-             
-             Serial.printf("\n✓ New user registered: %s\n", username.c_str());
-             
-             currentUsername = username;
-             newUserRegistered = true;
-             
-             // ส่ง Username ไป StickC
-             sendUsernameToStickC(username);
-             
-             request->send(200, "application/json", 
-                          "{\"status\":\"success\",\"username\":\"" + username + "\"}");
-         });
-     
-     // Route: Captive Portal Detection
-     server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request){
-         request->redirect("/");
-     });
-     
-     server.on("/fwlink", HTTP_GET, [](AsyncWebServerRequest *request){
-         request->redirect("/");
-     });
-     
-     // 404 Handler
-     server.onNotFound([](AsyncWebServerRequest *request){
-         request->redirect("/");
-     });
-     
-     server.begin();
-     Serial.println("✓ Web Server started");
-     
-     // แสดง QR Code
-     displayQRCode();
- }
- 
- // ========== Loop ==========
- void loop() {
-     M5.update();
-     
-     // ตรวจสอบว่ามี User ใหม่ลงทะเบียนหรือไม่
-     if (newUserRegistered) {
-         displayNewUserRegistered(currentUsername);
-         newUserRegistered = false;
-     }
-     
-     // แสดงจำนวน Client ที่เชื่อมต่อ
-     static unsigned long lastUpdate = 0;
-     if (millis() - lastUpdate > 5000) {
-         int clientCount = WiFi.softAPgetStationNum();
-         Serial.printf("Connected clients: %d\n", clientCount);
-         lastUpdate = millis();
-     }
-     
-     delay(10);
- }
+// ============================================
+// CONFIGURATION
+// ============================================
+const char *SSID_AP = "Web3_Showcase";
+const char *PASS_AP = "";
+const byte DNS_PORT = 53;
+IPAddress apIP(192, 168, 4, 1);
+
+// ============================================
+// GLOBAL STATE
+// ============================================
+DNSServer dnsServer;
+WebServer webServer(80);
+String lastUsername = "Guest";
+unsigned long lastUIUpdate = 0;
+bool espNowReady = false;
+
+// ============================================
+// HTML FORM (Dark Theme + Responsive UI)
+// ============================================
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML>
+<html>
+<head>
+  <title>Web3 Showcase - Identity</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container { 
+      background: #2d2d2d;
+      border-radius: 15px;
+      padding: 40px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      max-width: 500px;
+      width: 100%;
+      border: 1px solid #444;
+    }
+    h1 { 
+      color: #007bff;
+      margin-bottom: 10px;
+      font-size: 28px;
+      text-align: center;
+    }
+    .subtitle { 
+      color: #aaa;
+      text-align: center;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .qr-section { 
+      background: #1a1a1a;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 30px;
+      text-align: center;
+      border: 1px solid #444;
+    }
+    .qr-label { 
+      color: #aaa;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    input { 
+      width: 100%;
+      padding: 14px;
+      margin: 15px 0;
+      border: 2px solid #444;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #1a1a1a;
+      color: white;
+      transition: border-color 0.3s;
+    }
+    input:focus { 
+      outline: none;
+      border-color: #007bff;
+    }
+    input::placeholder {
+      color: #666;
+    }
+    button { 
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    button:hover { 
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px rgba(0, 123, 255, 0.4);
+    }
+    button:active { 
+      transform: translateY(0);
+    }
+    .info {
+      color: #888;
+      font-size: 12px;
+      margin-top: 20px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎯 Web3 Showcase</h1>
+    <p class="subtitle">Create Your Digital Identity</p>
+    
+    <div class="qr-section">
+      <p class="qr-label">📱 Scan QR Code to Connect</p>
+      <p style="font-size: 11px; color: #666;">WiFi: Web3_Showcase (Open Network)</p>
+    </div>
+
+    <form action="/submit" method="POST">
+      <input 
+        type="text" 
+        name="username" 
+        placeholder="Enter your name (2-12 chars)"
+        minlength="2"
+        maxlength="12"
+        required
+        autocomplete="off"
+      >
+      <button type="submit">✓ Create Identity</button>
+    </form>
+
+    <div class="info">
+      ✓ Check your wearable device after submission
+    </div>
+  </div>
+</body>
+</html>
+)rawliteral";
+
+// ============================================
+// ESP-NOW INITIALIZATION
+// ============================================
+void initESPNow() {
+    WiFi.mode(WIFI_AP_STA);
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("[ERROR] ESP-NOW Init Failed");
+        return;
+    }
+
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, BROADCAST_MAC, 6);
+    peerInfo.channel = BROADCAST_CHANNEL;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.println("[ERROR] Failed to add broadcast peer");
+        return;
+    }
+    espNowReady = true;
+    Serial.println("[OK] ESP-NOW initialized");
+}
+
+// ============================================
+// SEND USERNAME TO STICKC
+// ============================================
+void sendIdentityToStickC(const String &username) {
+    if (!espNowReady) {
+        M5.Lcd.fillRect(0, 140, 320, 100, TFT_RED);
+        M5.Lcd.setTextColor(TFT_WHITE);
+        M5.Lcd.setCursor(10, 160);
+        M5.Lcd.setTextSize(2);
+        M5.Lcd.print("ESP-NOW Error");
+        return;
+    }
+
+    ShowcaseMessage msg = createMessage(MSG_IDENTITY_ASSIGN, username.c_str(), 0, "");
+    esp_err_t result = esp_now_send(BROADCAST_MAC, (uint8_t *)&msg, sizeof(msg));
+
+    // Clear previous status
+    M5.Lcd.fillRect(0, 140, 320, 100, TFT_BLACK);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.setCursor(10, 160);
+
+    if (result == ESP_OK) {
+        M5.Lcd.setTextColor(TFT_GREEN);
+        M5.Lcd.printf("✓ Sent: %s", username.c_str());
+        lastUsername = username;
+        Serial.printf("[OK] Identity sent: %s\n", username.c_str());
+    } else {
+        M5.Lcd.setTextColor(TFT_RED);
+        M5.Lcd.print("✗ Send Failed");
+        Serial.println("[ERROR] Failed to send identity");
+    }
+    lastUIUpdate = millis();
+}
+
+// ============================================
+// UI DRAWING
+// ============================================
+void drawUI() {
+    M5.Lcd.fillScreen(TFT_BLACK);
+
+    // Header
+    M5.Lcd.fillRect(0, 0, 320, 60, TFT_NAVY);
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.setTextSize(3);
+    M5.Lcd.drawString("STATION 1", 20, 15);
+
+    // QR Code area
+    M5.Lcd.setTextColor(TFT_CYAN);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.drawString("QR Code:", 20, 75);
+
+    // Generate and display QR
+    String qrData = "WIFI:S:" + String(SSID_AP) + ";T:nopass;;";
+    M5.Lcd.qrcode(qrData.c_str(), 50, 100, 140, 5);
+
+    // Info
+    M5.Lcd.setTextColor(TFT_ORANGE);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.drawString("Go to: Web3_Showcase", 20, 320);
+
+    // Status
+    M5.Lcd.setTextColor(TFT_LIGHTGREY);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.drawString("Last user: " + lastUsername, 20, 350);
+}
+
+// ============================================
+// SETUP
+// ============================================
+void setup() {
+    M5.begin(true, true, true, true);
+    Serial.begin(115200);
+    delay(500);
+
+    Serial.println("\n\n=== STATION 1: CORE2 STARTING ===");
+
+    // Initialize SPIFFS if needed for static files
+    if (!SPIFFS.begin(true)) {
+        Serial.println("[WARN] SPIFFS mount failed");
+    }
+
+    // Draw initial UI
+    drawUI();
+
+    // Setup WiFi AP
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    if (!WiFi.softAP(SSID_AP, PASS_AP, BROADCAST_CHANNEL, 0, 4)) {
+        Serial.println("[ERROR] SoftAP creation failed");
+        return;
+    }
+    Serial.printf("[OK] SoftAP started: %s\n", SSID_AP);
+
+    // Setup DNS
+    dnsServer.start(DNS_PORT, "*", apIP);
+    Serial.println("[OK] DNS server started");
+
+    // Setup Web Server routes
+    webServer.on("/", HTTP_GET, [](void) {
+        webServer.send(200, "text/html", index_html);
+    });
+
+    webServer.on("/submit", HTTP_POST, [](void) {
+        if (webServer.hasArg("username")) {
+            String username = webServer.arg("username");
+            // Sanitize input
+            username.trim();
+            if (username.length() > 0 && username.length() <= 12) {
+                // Send success page
+                webServer.send(200, "text/html",
+                    "<html><body style='font-family:Arial;text-align:center;padding:40px;background:#2d2d2d;color:white;'>"
+                    "<h1 style='color:#00aa00;'>✓ Success!</h1>"
+                    "<p>Identity created: <b>" + username + "</b></p>"
+                    "<p>Check your wearable device...</p>"
+                    "<a href='/' style='color:#007bff;text-decoration:none;'>← Back</a>"
+                    "</body></html>");
+                sendIdentityToStickC(username);
+            } else {
+                webServer.send(400, "text/html",
+                    "<html><body style='font-family:Arial;text-align:center;padding:40px;background:#2d2d2d;color:white;'>"
+                    "<h1 style='color:#ff5555;'>✗ Invalid Input</h1>"
+                    "<p>Name must be 2-12 characters</p>"
+                    "<a href='/' style='color:#007bff;text-decoration:none;'>← Back</a>"
+                    "</body></html>");
+            }
+        } else {
+            webServer.send(400, "text/plain", "Missing username field");
+        }
+    });
+
+    webServer.onNotFound([](void) {
+        webServer.send(200, "text/html", index_html);
+    });
+
+    webServer.begin();
+    Serial.println("[OK] Web server started on port 80");
+
+    // Initialize ESP-NOW
+    initESPNow();
+
+    Serial.println("=== STATION 1 READY ===\n");
+}
+
+// ============================================
+// MAIN LOOP
+// ============================================
+void loop() {
+    // Handle DNS and HTTP requests
+    dnsServer.processNextRequest();
+    webServer.handleClient();
+
+    // Handle button presses
+    M5.update();
+
+    // Periodic UI refresh
+    if (millis() - lastUIUpdate > 10000) {
+        drawUI();
+        lastUIUpdate = millis();
+    }
+
+    delay(10);
+}
