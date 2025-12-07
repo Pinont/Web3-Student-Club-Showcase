@@ -1,296 +1,167 @@
-#include <Arduino.h>
-#include <M5Unified.h>
-#include <esp_now.h>
+// Station3_Paper.cpp: โค้ดสำหรับ M5-Paper (Activity Dashboard/Earn Value)
+// จัดการ E-Ink Display, Touch Input, และส่ง Request Earn CCoin
+
+#include <M5EPD.h>
 #include <WiFi.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include "../include/ShowcaseProtocol.h"
+#include <ESPAsyncWebServer.h>
+#include <HTTPClient.h>
+#include "config.h"
 
-// ============================================
-// CONFIGURATION
-// ============================================
-#define PAPER_WIDTH 960
-#define PAPER_HEIGHT 540
-#define ACTIVITY_COUNT 4
+AsyncWebServer server(80);
 
-// ============================================
-// ACTIVITY DEFINITIONS
-// ============================================
+// ข้อมูลกิจกรรม
 struct Activity {
-    const char *name;
-    int32_t reward;
-    bool selected;
+    String name;
+    int coin;
 };
 
-Activity activities[ACTIVITY_COUNT] = {
-    {"Read Book", 50, false},
-    {"Attend Class", 75, false},
-    {"Help Friend", 100, false},
-    {"Exercise", 60, false}
+Activity activityList[] = {
+    {"Walk 1000 steps", 10},
+    {"Recycle bottle", 5},
+    {"Bike 1 km", 20},
+    {"Reuse cup", 5}
 };
+const int NUM_ACTIVITIES = 4;
 
-// ============================================
-// GLOBAL STATE
-// ============================================
-struct {
-    String currentUsername;
-    int32_t balance;
-    int selectedActivityIdx;
-    bool submitting;
-    uint32_t lastUpdateTime;
-} g_paper = {
-    "Guest",
-    0,
-    -1,
-    false,
-    0
-};
+int selectedIndex = -1;
+String acknowledgeText = "";
 
-// ============================================
-// FORWARD DECLARATIONS
-// ============================================
-void submitActivity();
+// ตำแหน่งของปุ่มและข้อความ (ค่าประมาณ)
+const int START_Y = 100;
+const int ROW_HEIGHT = 50;
+const int BUTTON_HEIGHT = 40;
+const int BUTTON_Y = START_Y + NUM_ACTIVITIES * ROW_HEIGHT + 30;
 
-// ============================================
-// UI DRAWING
-// ============================================
-void drawUI() {
-    M5.Lcd.fillScreen(TFT_WHITE);
+// --- ฟังก์ชันช่วยเหลือด้าน HTTP Client ---
+void sendPostRequest(IPAddress ip, const char* endpoint, const String& body) {
+    HTTPClient http;
+    String url = String("http://") + ip.toString() + endpoint;
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    http.POST(body);
+    http.end();
+}
 
-    // ===== HEADER =====
-    M5.Lcd.setTextSize(3);
-    M5.Lcd.setTextColor(TFT_BLACK);
-    M5.Lcd.drawString("STATION 3: Earn Value", 50, 30);
+// --- ฟังก์ชันช่วยเหลือด้าน UI (E-Ink) ---
+void drawActivityDashboard(m5epd_update_mode_t mode = UPDATE_MODE_GC16) {
+    M5.EPD.WriteFullWindow(M5EPD_RECT_WINDOW_W, M5EPD_RECT_WINDOW_H, mode); // clear display
 
-    // ===== USER INFO =====
-    char userBuf[128];
-    snprintf(userBuf, sizeof(userBuf), "User: %s | Balance: %d coins",
-             g_paper.currentUsername.c_str(), g_paper.balance);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.drawString(userBuf, 50, 90);
+    M5.EPD.SetFont(&AsciiFont8);
+    M5.EPD.SetTextColor(0x0000, 0xFFFF); // Black text on White background
 
-    // ===== ACTIVITIES =====
-    M5.Lcd.drawString("Select an activity:", 50, 150);
+    // Title
+    M5.EPD.DrawString("3. Earn Value from Actions", 50, 20);
+    M5.EPD.DrawString("What did you do today?", 50, 60);
 
-    int yPos = 200;
-    int boxWidth = 350;
-    int boxHeight = 80;
-    int spacing = 20;
-
-    for (int i = 0; i < ACTIVITY_COUNT; i++) {
-        int xPos = 50 + (i % 2) * (boxWidth + spacing + 50);
-        int yPosActual = (i < 2) ? 200 : (200 + boxHeight + spacing);
-
-        // Draw box
-        uint16_t boxColor = (g_paper.selectedActivityIdx == i) ? TFT_BLACK : TFT_LIGHTGREY;
-        M5.Lcd.drawRect(xPos, yPosActual, boxWidth, boxHeight, boxColor);
-
-        // Activity text
-        M5.Lcd.setTextSize(2);
-        M5.Lcd.setTextColor(TFT_BLACK);
-        char actBuf[64];
-        snprintf(actBuf, sizeof(actBuf), "%s +%d",
-                 activities[i].name, activities[i].reward);
-        M5.Lcd.drawString(actBuf, xPos + 20, yPosActual + 15);
-
-        // Selected indicator
-        if (g_paper.selectedActivityIdx == i) {
-            M5.Lcd.drawString("✓", xPos + boxWidth - 40, yPosActual + 15);
+    // Activity List
+    for (int i = 0; i < NUM_ACTIVITIES; i++) {
+        String text = String(i + 1) + ". " + activityList[i].name + " -> " + String(activityList[i].coin) + " CCoin";
+        
+        // Highlight selection
+        if (i == selectedIndex) {
+            M5.EPD.FillRect(50, START_Y + i * ROW_HEIGHT, 540, ROW_HEIGHT, 0x0000); // Black background
+            M5.EPD.SetTextColor(0xFFFF, 0x0000); // White text
+        } else {
+            M5.EPD.FillRect(50, START_Y + i * ROW_HEIGHT, 540, ROW_HEIGHT, 0xFFFF); // White background
+            M5.EPD.SetTextColor(0x0000, 0xFFFF); // Black text
         }
+        
+        M5.EPD.DrawString(text.c_str(), 60, START_Y + i * ROW_HEIGHT + (ROW_HEIGHT / 2) - 10);
     }
+    
+    // Draw Submit Button
+    M5.EPD.FillRect(200, BUTTON_Y, 240, BUTTON_HEIGHT, 0x0000);
+    M5.EPD.SetTextColor(0xFFFF, 0x0000);
+    M5.EPD.DrawString("SUBMIT", 230, BUTTON_Y + (BUTTON_HEIGHT / 2) - 10);
 
-    // ===== SUBMIT BUTTON =====
-    int submitY = 420;
-    int submitWidth = 300;
-    int submitHeight = 60;
-    int submitX = (PAPER_WIDTH - submitWidth) / 2;
+    // Acknowledgement Text
+    M5.EPD.SetTextColor(0x0000, 0xFFFF);
+    M5.EPD.FillRect(50, BUTTON_Y + BUTTON_HEIGHT + 40, 540, 50, 0xFFFF);
+    M5.EPD.DrawString(acknowledgeText.c_str(), 60, BUTTON_Y + BUTTON_HEIGHT + 50);
 
-    M5.Lcd.drawRect(submitX, submitY, submitWidth, submitHeight, TFT_BLACK);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.setTextColor(TFT_BLACK);
-    M5.Lcd.drawString("Submit", submitX + 60, submitY + 12);
+    M5.EPD.UpdateFull(mode);
 }
 
-void drawWaitingScreen() {
-    M5.Lcd.fillScreen(TFT_WHITE);
-    M5.Lcd.setTextSize(3);
-    M5.Lcd.setTextColor(TFT_BLACK);
-    M5.Lcd.drawString("Submitting...", 200, 200);
-}
-
-// ============================================
-// TOUCH INPUT HANDLER (Enhanced)
-// ============================================
-void handleTouchInput() {
-    auto t = M5.Touch.getDetail();
-    if (!t.isPressed()) return;
-
-    uint16_t touchX = t.x;
-    uint16_t touchY = t.y;
-
-    // Debounce - ignore rapid successive touches
-    static uint32_t lastTouchTime = 0;
-    if (millis() - lastTouchTime < 200) return;
-    lastTouchTime = millis();
-
-    // Check activity selection
-    int boxWidth = 350;
-    int boxHeight = 80;
-    int spacing = 20;
-
-    for (int i = 0; i < ACTIVITY_COUNT; i++) {
-        int xPos = 50 + (i % 2) * (boxWidth + spacing + 50);
-        int yPosActual = (i < 2) ? 200 : (200 + boxHeight + spacing);
-
-        if (touchX >= xPos && touchX <= xPos + boxWidth &&
-            touchY >= yPosActual && touchY <= yPosActual + boxHeight) {
-            // Selection changed - visual feedback
-            if (g_paper.selectedActivityIdx != i) {
-                g_paper.selectedActivityIdx = i;
-                Serial.printf("[OK] Activity selected: %s\n", activities[i].name);
-                drawUI();
-            }
+// --- ฟังก์ชัน Touch Handler ---
+void handleTouch(int x, int y) {
+    // Check Activity List Area
+    for (int i = 0; i < NUM_ACTIVITIES; i++) {
+        if (x > 50 && x < 590 && y > START_Y + i * ROW_HEIGHT && y < START_Y + (i + 1) * ROW_HEIGHT) {
+            selectedIndex = i;
+            acknowledgeText = "Selected: " + activityList[i].name + " (+ " + String(activityList[i].coin) + " CCoin)";
+            drawActivityDashboard(UPDATE_MODE_DU4);
             return;
         }
     }
 
-    // Check submit button
-    int submitY = 420;
-    int submitWidth = 300;
-    int submitHeight = 60;
-    int submitX = (PAPER_WIDTH - submitWidth) / 2;
-
-    if (touchX >= submitX && touchX <= submitX + submitWidth &&
-        touchY >= submitY && touchY <= submitY + submitHeight) {
-        if (g_paper.selectedActivityIdx >= 0 && !g_paper.submitting) {
-            Serial.println("[INFO] Submit button pressed");
-            submitActivity();
+    // Check Submit Button Area
+    if (x > 200 && x < 440 && y > BUTTON_Y && y < BUTTON_Y + BUTTON_HEIGHT) {
+        if (selectedIndex != -1) {
+            // 20. ส่ง Request พร้อมข้อมูล CCoin ไปยัง StickC-Plus2
+            Activity selected = activityList[selectedIndex];
+            String body = "{\"amount\": " + String(selected.coin) + "}";
+            
+            sendPostRequest(IP_STICKC, ENDPOINT_EARN_COIN, body);
+            
+            // 19. Update Text แสดงกิจกรรมที่เลือกและ CCoin ที่ได้รับ
+            acknowledgeText = "Submitted! You'll receive: " + String(selected.coin) + " CCoin for " + selected.name;
+            selectedIndex = -1; // Clear selection after submission
+            drawActivityDashboard(UPDATE_MODE_DU4);
+        } else {
+            acknowledgeText = "Please select an activity first.";
+            drawActivityDashboard(UPDATE_MODE_DU4);
         }
-        return;
     }
 }
 
-void submitActivity() {
-    if (g_paper.selectedActivityIdx < 0 || g_paper.submitting) return;
-
-    g_paper.submitting = true;
-    drawWaitingScreen();
-
-    Activity &selected = activities[g_paper.selectedActivityIdx];
-    ShowcaseMessage msg = createMessage(MSG_EARN_COIN, g_paper.currentUsername.c_str(),
-                                        selected.reward, selected.name);
-
-    esp_err_t result = esp_now_send(BROADCAST_MAC, (uint8_t *)&msg, sizeof(msg));
-
-    if (result == ESP_OK) {
-        Serial.printf("[OK] Submitted activity: %s (+%d)\n", selected.name, selected.reward);
-    } else {
-        Serial.println("[ERROR] Failed to send activity");
-    }
-
-    delay(1000);
-    g_paper.submitting = false;
-    g_paper.selectedActivityIdx = -1;
-    drawUI();
+// --- ฟังก์ชัน HTTP Server Handlers ---
+void handleSystemReset(AsyncWebServerRequest *request) {
+    selectedIndex = -1;
+    acknowledgeText = "";
+    // 52. รีเซ็ตการเลือกกิจกรรม/เมนู
+    drawActivityDashboard();
+    request->send(200, "text/plain", "M5-Paper S3 reset complete.");
 }
 
-// ============================================
-// ESP-NOW MESSAGE HANDLER
-// ============================================
-void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
-    if (len != sizeof(ShowcaseMessage)) return;
-
-    ShowcaseMessage msg;
-    memcpy(&msg, incomingData, sizeof(msg));
-
-    if (!verifyChecksum(msg)) {
-        Serial.println("[WARN] Checksum verification failed");
-        return;
-    }
-
-    switch (msg.type) {
-        case MSG_IDENTITY_ASSIGN:
-            if (msg.username[0] != '\0') {
-                g_paper.currentUsername = String(msg.username);
-                g_paper.balance = 0;
-                g_paper.selectedActivityIdx = -1;
-                Serial.printf("[OK] Identity updated: %s\n", msg.username);
-                drawUI();
-            }
-            break;
-
-        case MSG_EARN_COIN:
-            g_paper.balance += msg.amount;
-            Serial.printf("[OK] Balance updated: %d\n", g_paper.balance);
-            drawUI();
-            break;
-
-        case MSG_RESET_ALL:
-            g_paper.currentUsername = "Guest";
-            g_paper.balance = 0;
-            g_paper.selectedActivityIdx = -1;
-            g_paper.submitting = false;
-            Serial.println("[OK] System reset");
-            drawUI();
-            break;
-
-        default:
-            break;
-    }
-}
-
-// ============================================
-// SETUP
-// ============================================
+// --- Setup Function ---
 void setup() {
     M5.begin();
+    M5.EPD.SetRotation(90); // Landscape
     Serial.begin(115200);
-    delay(500);
 
-    Serial.println("\n\n=== STATION 3: PAPER STARTING ===");
+    // กำหนด Static IP
+    WiFi.config(IP_PAPER_S3, IP_CORE2, IPAddress(255, 255, 255, 0));
+    WiFi.begin(AP_SSID, AP_PASSWORD);
 
-    // Clear screen
-    M5.Lcd.fillScreen(TFT_WHITE);
-
-    // Initialize WiFi
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(false);
-    delay(100);
-
-    // Initialize ESP-NOW
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("[ERROR] ESP-NOW initialization failed");
-        while (1) delay(1000);
+    Serial.println("Connecting to AP...");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
     }
+    Serial.print("\nConnected to AP. IP: ");
+    Serial.println(WiFi.localIP());
 
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, BROADCAST_MAC, 6);
-    peerInfo.channel = BROADCAST_CHANNEL;
-    peerInfo.encrypt = false;
-    esp_now_add_peer(&peerInfo);
+    // ตั้งค่า Server Endpoints
+    server.on(ENDPOINT_RESET_MENU, HTTP_POST, handleSystemReset);
 
-    esp_now_register_recv_cb(onDataRecv);
+    server.begin();
 
-    Serial.println("[OK] ESP-NOW initialized");
-
-    // Draw initial UI
-    drawUI();
-
-    Serial.println("=== STATION 3 PAPER READY ===\n");
+    // 17. แสดง Activity List
+    drawActivityDashboard();
 }
 
-// ============================================
-// MAIN LOOP
-// ============================================
 void loop() {
     M5.update();
-    handleTouchInput();
-
-    // Periodic UI refresh
-    if (millis() - g_paper.lastUpdateTime > 5000) {
-        drawUI();
-        g_paper.lastUpdateTime = millis();
+    
+    // Handle Touch Input
+    if (M5.TP.avaliable()) {
+        M5.TP.Get>>tpData;
+        if (tpData.touches != 0) {
+            // Assume single touch for simplicity
+            handleTouch(tpData.points[0].x, tpData.points[0].y);
+        }
+        tpData.touches = 0;
     }
-
-    delay(100);
+    
+    delay(50);
 }
