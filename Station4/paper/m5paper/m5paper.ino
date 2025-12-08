@@ -4,6 +4,7 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <esp_now.h>
+#include "config.h"
 
 const char *SSID_AP = "Web3Showcase_AP";
 const char *PASSWORD_AP = NULL;
@@ -107,9 +108,8 @@ void setup() {
 
   drawMenu();
 
-  // WiFi Init
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(SSID_AP, PASSWORD_AP);
+  WiFi.config(IP_PAPER_S4, IP_STATION1_AP, IPAddress(255, 255, 255, 0));
+  WiFi.begin(AP_SSID, AP_PASSWORD);
 
   // ESP-NOW init
   if (esp_now_init() != ESP_OK) {

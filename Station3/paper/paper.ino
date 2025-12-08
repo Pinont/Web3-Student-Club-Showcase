@@ -13,31 +13,17 @@ int selectedChoice = 0;
 bool submitted = false;
 AsyncWebServer server(80);
 
-String choiceName(int choice) {
-    if (choice == 1) {
-        return "Walk 1000 steps";
-    } else if (choice == 2) {
-        return "Recycle bottle";
-    } else if (choice == 3) {
-        return "Bike 1 km";
-    } else if (choice == 4) {
-        return "Reuse cup";
-    } else {
-        return "no choice presets";
-    }
-}
+struct Activity {
+    String name;
+    String coin;
+};
 
-String choiceCoin(int choice) {
-    if (choice == 1) { // walk 1000 step
-        return "10";
-    } else if (choice == 2 || choice == 4) { // recycle bottle or reuse cup
-        return "5";
-    } else if (choice == 3) { // bike 1 km
-        return "20";
-    } else { // no c
-        return "0";
-    }
-}
+Activity activities[] = {
+    {"Walk 1000 steps", "10"},
+    {"Recycle bottle", "5"},
+    {"Bike 1 km", "20"},
+    {"Reuse cup", "5"}
+};
 
 void drawMenu() {
     canvas.createCanvas(540, 960); 
@@ -52,9 +38,9 @@ void drawMenu() {
     int yString = 155;
     for (int i = 1; i <= 4; i++) {
         canvas.drawRect(0, yRect, 540, 80, 15);
-        String name = String(i) + ". " + choiceName(i);
+        String name = String(i) + ". " + activities[i-1].name;
         canvas.drawString(name, 30, yString);
-        String coin = "   --> " + choiceCoin(i) + " CCoin";
+        String coin = "   --> " + activities[i-1].coin + " CCoin";
         canvas.drawString(coin, 30, yString + 30);
         defaultSelectButton(i);
         yRect += 100;
@@ -105,20 +91,23 @@ void defaultSelectButton(int choice) {
 
 void handleSystemReset(AsyncWebServerRequest *request) {
     drawMenu();
+    updateStatus("");
     submitted = false;
     selectedChoice = 0;
     request->send(200, "text/plain", "M5-Paper S3 reset complete.");
 }
 
-bool sendReceiveCoin(IPAddress ip, const char* endpoint, const String& body) {
+bool sendReceiveCoin(String coin_value) {
     HTTPClient http;
-    String url = String("http://") + ip.toString() + endpoint;
+    String url = "http://" + IP_STICKC.toString() + ":88/" + ENDPOINT_EARN_COIN;
     http.begin(url);
-    http.addHeader("Content-Type", "application/json");
-    int code = http.POST(body);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+    String postData = "amount=" + coin_value; 
+
+    int code = http.POST(postData);
     String response = http.getString();
     http.end();
-
     if (code == 200) {
         Serial.println("Sent OK");
         return true;
@@ -153,6 +142,8 @@ void setup() {
 }
 
 void loop() {
+    M5.update();
+
     if (M5.TP.available()) {
         if (!M5.TP.isFingerUp()) {
             M5.TP.update();
@@ -197,14 +188,11 @@ void loop() {
                 }
                 // ปุ่ม Submit (เช็ค X ให้อยู่ในกรอบ 120-420)
                 else if (x >= 550 && x <= 650 && y >= 120 && y <= 420) { // 120 <= y <= 420 && 550 <= x <= 650
-                    if (selectedChoice == 0) {
-                        updateStatus("Please select first!");
-                    } else {
+                    if (selectedChoice > 0) {
                         updateStatus("Submitting...");
-                        String type = "--> " + choiceName(selectedChoice);
-                        String coin = "You'll receive: " + choiceCoin(selectedChoice) + " CCoin";
-                        String body = "{\"amount\": " + choiceCoin(selectedChoice) + "}";
-                        submitted = sendReceiveCoin(IP_STICKC, ENDPOINT_EARN_COIN, body);
+                        String type = "--> " + activities[selectedChoice-1].name;
+                        String coin = "You'll receive: " + activities[selectedChoice-1].coin + " CCoin";
+                        submitted = sendReceiveCoin(activities[selectedChoice-1].coin);
 
                         if (submitted) {
                             sumbitStatus(type, coin);
@@ -214,9 +202,7 @@ void loop() {
                     }
                 }
             }
-            delay(100);
-            x = 0;
-            y = 0;
+            delay(50);
         }
     }
 }
