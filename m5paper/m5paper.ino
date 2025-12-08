@@ -14,6 +14,13 @@ IPAddress gateway(192, 168, 4, 1);
 IPAddress subnet(255, 255, 255, 0); 
 uint8_t atomMAC[] = {0x4C, 0x75, 0x25, 0xAC, 0xBE, 0x18};
 
+
+typedef struct struct_message {
+  char msg[32];
+} struct_message;
+
+struct_message outgoing;
+
 M5EPD_Canvas canvas(&M5.EPD);
 M5EPD_Canvas status_canvas(&M5.EPD); 
 
@@ -102,6 +109,11 @@ void setup() {
   M5.EPD.Clear(true);
   M5.TP.SetRotation(0);
 
+  // WiFi Init
+  WiFi.mode(WIFI_STA);
+  WiFi.config(localIP, gateway, subnet);
+  WiFi.begin(SSID_AP, PASSWORD_AP);
+
   // ESP-NOW init
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP-NOW Init Failed!");
@@ -116,21 +128,15 @@ void setup() {
 
   drawMenu();
 
-  WiFi.mode(WIFI_STA);
-  WiFi.config(localIP, gateway, subnet);
-  WiFi.begin(SSID_AP, PASSWORD_AP);
-
-  String mac = WiFi.macAddress();
-  Serial.print("M5Paper MAC Address: ");
-  Serial.println(mac);
-
+  Serial.print("Connecting");
   while (WiFi.status() != WL_CONNECTED) { 
     delay(500);
     Serial.print(".");
   }
   Serial.println("\nConnected!");
 
-  paperServer.on("/menu", HTTP_GET, handleGetRequest);  
+  paperServer.on("/menu", HTTP_GET, handleGetRequest);
+  paperServer.begin();
 }
 
 void handleGetRequest(AsyncWebServerRequest *request) {
