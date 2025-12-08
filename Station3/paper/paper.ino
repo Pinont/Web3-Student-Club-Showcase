@@ -1,6 +1,8 @@
 #include <M5EPD.h>
 #include <WiFi.h>
+#include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
+#include "config.h"
 
 // สร้าง Canvas 2 ใบ (ใบใหญ่=เมนู, ใบเล็ก=Status)
 M5EPD_Canvas canvas(&M5.EPD);        
@@ -9,11 +11,7 @@ M5EPD_Canvas choice_canvas(&M5.EPD);
 
 int selectedChoice = 0;
 bool submitted = false;
-
-const char* ssid = "Web3Showcase_AP";
-const char* password = NULL;
-char* stickc_ip = "192.168.4.2";
-const char* port = "88";
+AsyncWebServer server(80);
 
 String choiceName(int choice) {
     if (choice == 1) {
@@ -105,17 +103,22 @@ void defaultSelectButton(int choice) {
     canvas.drawCircle(490, ySelector, 30, 15);
 }
 
-bool sendReceiveCoin(String coin_value) {
+void handleSystemReset(AsyncWebServerRequest *request) {
+    drawMenu();
+    submitted = false;
+    selectedChoice = 0;
+    request->send(200, "text/plain", "M5-Paper S3 reset complete.");
+}
+
+bool sendReceiveCoin(IPAddress ip, const char* endpoint, const String& body) {
     HTTPClient http;
-    String url = "http://" + String(stickc_ip) + ":" + String(port) + "/set_coins";
+    String url = String("http://") + ip.toString() + endpoint;
     http.begin(url);
-    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-    String postData = "coins=" + coin_value; 
-
-    int code = http.POST(postData);
+    http.addHeader("Content-Type", "application/json");
+    int code = http.POST(body);
     String response = http.getString();
     http.end();
+
     if (code == 200) {
         Serial.println("Sent OK");
         return true;
@@ -126,22 +129,27 @@ bool sendReceiveCoin(String coin_value) {
 
 void setup() {
     M5.begin();
-    
+    M5.EPD.SetRotation(90); // Landscape
     Serial.begin(115200);
-    WiFi.begin(ssid, password);
-    
-    M5.EPD.SetRotation(90); 
-    M5.EPD.Clear(true);
-    M5.TP.SetRotation(0); // หมุนระบบสัมผัสให้ตรงกัน
 
-    drawMenu();     
+    // กำหนด Static IP
+    WiFi.config(IP_PAPER_S3, IP_STATION1_AP, IPAddress(255, 255, 255, 0));
+    WiFi.begin(AP_SSID, AP_PASSWORD);
 
-    Serial.print("Connecting");
+    Serial.println("Connecting to AP...");
     while (WiFi.status() != WL_CONNECTED) {
-        Serial.print(".");
         delay(500);
+        Serial.print(".");
     }
-    Serial.println("\nConnected!");
+    Serial.print("\nConnected to AP. IP: ");
+    Serial.println(WiFi.localIP());
+
+    // ตั้งค่า Server Endpoints
+    server.on(ENDPOINT_RESET_GLOBAL, HTTP_POST, handleSystemReset);
+
+    server.begin();
+
+    drawMenu();
 }
 
 void loop() {
@@ -195,7 +203,9 @@ void loop() {
                         updateStatus("Submitting...");
                         String type = "--> " + choiceName(selectedChoice);
                         String coin = "You'll receive: " + choiceCoin(selectedChoice) + " CCoin";
-                        submitted = sendReceiveCoin(choiceCoin(selectedChoice));
+                        String body = "{\"amount\": " + choiceCoin(selectedChoice) + "}";
+                        submitted = sendReceiveCoin(IP_STICKC, ENDPOINT_EARN_COIN, body);
+
                         if (submitted) {
                             sumbitStatus(type, coin);
                         } else {

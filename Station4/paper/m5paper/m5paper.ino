@@ -9,9 +9,6 @@ const char *SSID_AP = "Web3Showcase_AP";
 const char *PASSWORD_AP = NULL;
 const int LOCAL_PORT = 88; 
 
-IPAddress localIP(192, 168, 4, 8);
-IPAddress gateway(192, 168, 4, 1);   
-IPAddress subnet(255, 255, 255, 0); 
 uint8_t atomMAC[] = {0x4C, 0x75, 0x25, 0xAC, 0xBE, 0x18};
 
 typedef struct struct_message {
@@ -108,9 +105,10 @@ void setup() {
   M5.EPD.Clear(true);
   M5.TP.SetRotation(0);
 
+  drawMenu();
+
   // WiFi Init
   WiFi.mode(WIFI_STA);
-  WiFi.config(localIP, gateway, subnet);
   WiFi.begin(SSID_AP, PASSWORD_AP);
 
   // ESP-NOW init
@@ -119,20 +117,18 @@ void setup() {
     return;
   }
 
-  esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, atomMAC, 6);
-  peerInfo.channel = 0;
-  peerInfo.encrypt = false;
-  esp_now_add_peer(&peerInfo);
-
-  drawMenu();
-
   Serial.print("Connecting");
   while (WiFi.status() != WL_CONNECTED) { 
     delay(500);
     Serial.print(".");
   }
   Serial.println("\nConnected!");
+
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, atomMAC, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+  esp_now_add_peer(&peerInfo);
 
   paperServer.on("/menu", HTTP_GET, handleGetRequest);
   paperServer.begin();
