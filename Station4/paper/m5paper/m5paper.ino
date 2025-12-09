@@ -102,6 +102,7 @@ void handleSystemReset(AsyncWebServerRequest *request) {
   updateStatus("");
   submitted = false;
   selectedChoice = 0;
+  Serial.println("Received reset signal from Core");
   request->send(200, "text/plain", "M5-Paper S4 reset complete.");
 }
 
@@ -150,6 +151,7 @@ void setup() {
   esp_now_add_peer(&peerInfo);
 
   paperServer.on(ENDPOINT_GET_ORDER, HTTP_GET, handleGetRequest);
+  paperServer.on(ENDPOINT_RESET_GLOBAL, HTTP_POST, handleSystemReset);
   paperServer.on(ENDPOINT_HEARTBEAT, HTTP_GET, [] (AsyncWebServerRequest *r) {
         r->send(200, "text/plain", "OK");
     });

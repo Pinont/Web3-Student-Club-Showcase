@@ -95,6 +95,7 @@ void handleSystemReset(AsyncWebServerRequest *request) {
     updateStatus("");
     submitted = false;
     selectedChoice = 0;
+    Serial.println("Received reset signal from Core");
     request->send(200, "text/plain", "M5-Paper S3 reset complete.");
 }
 
