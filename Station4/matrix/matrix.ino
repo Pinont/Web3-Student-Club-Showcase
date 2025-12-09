@@ -8,14 +8,6 @@ uint8_t paperAddress[]  = {0x08, 0xF9, 0xE0, 0xF6, 0x23, 0x58}; // M5Paper
 uint8_t stickcAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // StickC Plus2
 uint8_t echoAddress[]   = {0x90, 0x15, 0x06, 0xFA, 0xE7, 0x70}; // Echo
 
-// โครงสร้างข้อมูล
-typedef struct struct_order {
-    char menuName[32]; 
-    int price;         
-} struct_order;
-
-struct_order incomingOrder; 
-
 bool massSend = false;
 
 int standbyIcon[] = { 0, 1, 2, 3, 4, 5, 9, 10, 12, 14, 15, 19, 20, 21, 22, 23, 24 };
