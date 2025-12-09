@@ -114,7 +114,7 @@ void pingStickC() {
 
 bool sendReceiveCoin(String coin_value) {
     HTTPClient http;
-    String url = "http://" + IP_STICKC.toString() + "/" + ENDPOINT_EARN_COIN;
+    String url = "http://" + IP_STICKC.toString() + ENDPOINT_EARN_COIN;
     Serial.println("Sending " + coin_value + " to " + url);
     http.begin(url);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");

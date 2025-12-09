@@ -23,11 +23,14 @@ int selectedChoice = 0;
 
 bool submitted = false;
 
+// Receive trigger action from atom matrix
 void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   // --- TRIGGER EVENT ON M5PAPER ---
   Serial.print("receive from matrix");
 }
 
+
+// Send number of order to atom matrix
 void sendCommand(const char *cmd) {
   strcpy(outgoing.msg, cmd);
   esp_now_send(atomMAC, (uint8_t *)&outgoing, sizeof(outgoing));
