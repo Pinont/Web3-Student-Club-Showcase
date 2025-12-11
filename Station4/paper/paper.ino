@@ -2,12 +2,24 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 #include "config.h"
 
 // สร้าง Canvas 2 ใบ (ใบใหญ่=เมนู, ใบเล็ก=Status)
 M5EPD_Canvas canvas(&M5.EPD);        
 M5EPD_Canvas status_canvas(&M5.EPD); 
-M5EPD_Canvas choice_canvas(&M5.EPD); 
+
+uint8_t atomMAC[] = {0x4C, 0x75, 0x25, 0xAC, 0xBE, 0x18};
+uint8_t stickc1MAC[]  = {0x00, 0x4B, 0x12, 0xC4, 0x2D, 0xF8};
+uint8_t stickc2MAC[]  = {0x00, 0x4b, 0x12, 0xC4, 0x35, 0x48};
+uint8_t echoMAC[]   = {0x90, 0x15, 0x06, 0xFA, 0xE7, 0x70};
+
+typedef struct struct_message {
+  char msg[32];
+} struct_message;
+
+struct_message outgoing;
 
 int selectedChoice = 0;
 bool submitted = false;
@@ -15,23 +27,32 @@ AsyncWebServer server(80);
 
 struct Activity {
     String name;
-    String coin;
 };
 
 Activity activities[] = {
-    {"Walk 1000 steps", "10"},
-    {"Recycle bottle", "5"},
-    {"Bike 1 km", "20"},
-    {"Reuse cup", "5"}
+    {"Coffee.......2 CCoin"},
+    {"Croissant....3 CCoin"},
+    {"Lunch Set....5 CCoin"},
+    {"Tea..........2 CCoin"}
 };
+
+// Send number of order to atom matrix
+void sendCommand(uint8_t *macAddr, const char *cmd) {
+  strcpy(outgoing.msg, cmd);
+  esp_now_send(macAddr, (uint8_t *)&outgoing, sizeof(outgoing));
+  Serial.print("Sent: ");
+  Serial.println(cmd);
+}
 
 void drawMenu() {
 
     canvas.createCanvas(540, 960); 
     
+    canvas.fillCanvas(0);
+    
     // Header
     canvas.setTextSize(4);
-    canvas.drawString("What did you do today?", 8, 50);
+    canvas.drawString("CAMT WEB3 CAFE", 100, 50);
 
     canvas.setTextSize(3);
 
@@ -41,42 +62,14 @@ void drawMenu() {
         canvas.drawRect(0, yRect, 540, 80, 15);
         String name = String(i) + ". " + activities[i-1].name;
         canvas.drawString(name, 30, yString);
-        String coin = "   --> " + activities[i-1].coin + " CCoin";
-        canvas.drawString(coin, 30, yString + 30);
         defaultSelectButton(i);
         yRect += 100;
         yString += 100;
     }
-
-    canvas.fillRect(120, 550, 300, 100, 15);
-    canvas.setTextColor(0, 15); 
-    canvas.setTextSize(4);
-    canvas.drawString("Submit", 200, 585);
     
     canvas.setTextColor(15, 0); 
 
     canvas.pushCanvas(0, 0, UPDATE_MODE_GC16);
-}
-
-void updateStatus(String msg) {
-    status_canvas.createCanvas(540, 100); 
-    status_canvas.fillCanvas(0);          
-    status_canvas.setTextSize(3);
-    status_canvas.drawString(msg, 20, 20);
-
-    status_canvas.pushCanvas(0, 700, UPDATE_MODE_DU4); 
-}
-
-void sumbitStatus(String msg1, String msg2) {
-    status_canvas.createCanvas(540, 100); 
-    status_canvas.fillCanvas(0);          
-    status_canvas.setTextSize(3);
-    status_canvas.drawString(msg1, 20, 20);
-    status_canvas.drawString(msg2, 23, 50);
-
-    status_canvas.pushCanvas(0, 700, UPDATE_MODE_DU4);
-
-    Serial.println("Submitted");
 }
 
 void selectButton(int choice) {
@@ -91,43 +84,21 @@ void defaultSelectButton(int choice) {
 }
 
 void handleSystemReset(AsyncWebServerRequest *request) {
+    String msg = String(-1);
+    sendCommand(atomMAC, msg.c_str());
+    sendCommand(echoMAC, msg.c_str());
     Serial.println("Received reset signal from Core");
-    request->send(200, "text/plain", "M5-Paper S3 reset complete.");
+    request->send(200, "text/plain", "M5-Paper S4 reset complete.");
     ESP.restart();
 }
 
-void pingStickC() {
-    WiFiClient client;
-    Serial.print("Pinging StickC (");
-    Serial.print(IP_STICKC);
-    Serial.print(":80)... ");
-    
-    if (client.connect(IP_STICKC, 80)) {
-        Serial.println("OK");
-        client.stop();
-    } else {
-        Serial.println("Failed");
-    }
-}
-
-bool sendReceiveCoin(String coin_value) {
-    HTTPClient http;
-    String url = "http://" + IP_STICKC.toString() + ENDPOINT_EARN_COIN;
-    Serial.println("Sending " + coin_value + " to " + url);
-    http.begin(url);
-    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-    String postData = "amount=" + coin_value; 
-
-    int code = http.POST(postData);
-    String response = http.getString();
-    http.end();
-    if (code == 200) {
-        Serial.println("Sent OK");
-        return true;
-    }
-    Serial.println(String(code) + " Error: " + response);
-    return false;
+void addPeer(uint8_t *macAddr) {
+    esp_now_peer_info_t peerInfo;
+    memset(&peerInfo, 0, sizeof(peerInfo));
+    memcpy(peerInfo.peer_addr, macAddr, 6);
+    peerInfo.channel = WiFi.channel();
+    peerInfo.encrypt = false;
+    esp_now_add_peer(&peerInfo);
 }
 
 void setup() {
@@ -136,7 +107,9 @@ void setup() {
     Serial.begin(115200);
 
     // กำหนด Static IP
-    WiFi.config(IP_PAPER_S3, IP_STATION1_AP, IPAddress(255, 255, 255, 0));
+    WiFi.config(IP_PAPER_S4, IP_STATION1_AP, IPAddress(255, 255, 255, 0));
+    WiFi.setTxPower(WIFI_POWER_19_5dBm); // Recommended to set power before connect
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE); // Force channel 1
     WiFi.begin(AP_SSID, AP_PASSWORD);
 
     Serial.println("Connecting to AP...");
@@ -147,11 +120,42 @@ void setup() {
     Serial.print("\nConnected to AP. IP: ");
     Serial.println(WiFi.localIP());
 
-    // Check connection to StickC
-    pingStickC();
+    // Init ESP-NOW
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
+
+    addPeer(atomMAC);
+    addPeer(stickc1MAC);
+    addPeer(stickc2MAC);
+    addPeer(echoMAC);
 
     // ตั้งค่า Server Endpoints
     server.on(ENDPOINT_RESET_GLOBAL, HTTP_POST, handleSystemReset);
+    server.on(ENDPOINT_GET_ORDER, HTTP_GET, [] (AsyncWebServerRequest *r) {
+        if (selectedChoice == 0) {
+            r->send(201, "text/plain", "Choice not selected");
+            return;
+        }
+        String msg = "";
+        if (selectedChoice == 0) {
+            msg = "48";
+        } else if (selectedChoice == 1) {
+            msg = "49";
+        } else if (selectedChoice == 2) {
+            msg = "50";
+        } else if (selectedChoice == 3) {
+            msg = "51";
+        } else if (selectedChoice == 4) {
+            msg = "52";
+        }
+        sendCommand(echoMAC, msg.c_str());
+        sendCommand(stickc1MAC, msg.c_str());
+        sendCommand(stickc2MAC, msg.c_str());
+
+        r->send(200, "text/plain", "OK");
+    });
     server.on(ENDPOINT_HEARTBEAT, HTTP_GET, [] (AsyncWebServerRequest *r) {
         r->send(200, "text/plain", "OK");
     });
@@ -161,9 +165,7 @@ void setup() {
     drawMenu();
 }
 
-void loop() {
-    M5.update();
-
+void touchAction() {
     if (M5.TP.available()) {
         if (!M5.TP.isFingerUp()) {
             M5.TP.update();
@@ -171,7 +173,6 @@ void loop() {
             // อ่านค่า X (0-540) และ Y (0-960)
             int x = M5.TP.readFingerX(0);
             int y = M5.TP.readFingerY(0);
-
             // Serial.printf("X: %d, Y: %d\n", x, y);
             if (!submitted) {
                 if (selectedChoice != 1 && x >= 130 && x <= 229) {
@@ -206,23 +207,13 @@ void loop() {
                     selectButton(selectedChoice);
                     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
                 }
-                // ปุ่ม Submit (เช็ค X ให้อยู่ในกรอบ 120-420)
-                else if (x >= 550 && x <= 650 && y >= 120 && y <= 420) { // 120 <= y <= 420 && 550 <= x <= 650
-                    if (selectedChoice > 0) {
-                        updateStatus("Submitting...");
-                        String type = "--> " + activities[selectedChoice-1].name;
-                        String coin = "You'll receive: " + activities[selectedChoice-1].coin + " CCoin";
-                        submitted = sendReceiveCoin(activities[selectedChoice-1].coin);
-
-                        if (submitted) {
-                            sumbitStatus(type, coin);
-                        } else {
-                            updateStatus("Error sending coin.");
-                        }
-                    }
-                }
             }
-            delay(100);
         }
     }
+}
+
+void loop() {
+    M5.update();
+    touchAction();
+    delay(100);
 }

@@ -13,7 +13,7 @@ const char *PASSWORD_AP = "12345678";
 const int LOCAL_PORT = 88; 
 
 // --- FIX IP SETTINGS ---
-IPAddress localIP(192, 168, 4, 20);   // ใช้ IP .20 (ถูกต้องแล้ว)
+IPAddress localIP(192, 168, 4, 10);
 IPAddress gateway(192, 168, 4, 1);   
 IPAddress subnet(255, 255, 255, 0); 
 
