@@ -14,7 +14,7 @@ uint8_t echoAddress[]   = {0x90, 0x15, 0x06, 0xFA, 0xE7, 0x70}; // Echo
 int standbyIcon[] = { 0, 1, 2, 3, 4, 5, 9, 10, 12, 14, 15, 19, 20, 21, 22, 23, 24 };
 
 // ไอคอนติ๊กถูก
-int checkIcon[] = { 15, 21, 17, 13, 9 };
+int checkIcon[] = { 19, 18, 17, 16, 15 };
 
 bool sending = false;
 
