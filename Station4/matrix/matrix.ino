@@ -90,7 +90,7 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, i
     // 51 = 3rd choice
     // 52 = 4th choice
 
-    Serial.print("Recieved: ");
+    Serial.print("Received: ");
     Serial.print(incomingData[0]);
     Serial.println();
 
