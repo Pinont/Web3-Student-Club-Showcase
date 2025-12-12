@@ -35,7 +35,7 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, i
         Serial.println("Receive reset trigger from Core.");
         ESP.restart();
     }
-    Serial.printf("Recieve Trigger event from matrix");
+    Serial.printf("Receive Trigger event from matrix");
 
     // Trigger the sound sequence upon receiving data
     currentSoundState = BEEP1_START;
